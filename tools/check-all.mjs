@@ -88,6 +88,7 @@ const regressionTests = [
   'test-build-closure.mjs',
   'test-project-config.mjs',
   'test-catalog-loader.mjs',
+  'test-catalog-feeds.mjs',
   'test-catalog-engine.mjs',
   'test-menuconfig-direct-intent.mjs',
   'test-compatibility-recommendation.mjs',
@@ -241,9 +242,9 @@ if (!concreteInApp.length && !/["'`]PACKAGE_[A-Za-z0-9_.+@-]+["'`]/.test(engine)
 const catalogOnly =
   loader.includes('fetchApplications') && loader.includes('applications.json.gz') &&
   loader.includes('data.probeUi?.schema') && loader.includes("typeof row['zh-CN'] !== 'string'") &&
-  loader.includes('![2, 3, 4, 5].includes(schema)') && loader.includes('![2, 3, 4, 5].includes(Number(data.schema))') &&
-  loader.includes('schema,') && engine.includes('compatibility document requires schema 2, 3, 4, or 5') &&
-  engine.includes('COMPATIBILITY_RULE_KEYS_V5') && engine.includes('triggerPackages') &&
+  loader.includes('compatibilityV6') && loader.includes('![2, 3, 4, 5, 6].includes(Number(data.schema))') &&
+  loader.includes('schema,') && engine.includes('compatibility document requires schema 2, 3, 4, 5, or 6') &&
+  engine.includes('COMPATIBILITY_RULE_KEYS_V6') && engine.includes('triggerPackages') &&
   engine.includes('compatibilityPatternMatches') &&
   app.includes('ensureCatalogApplications') && app.includes('CATALOG_ENGINE.evaluateCompatibilityRules') &&
   app.includes('CATALOG_ENGINE.deriveCompatibilityPlans') && app.includes('CATALOG_ENGINE.applyUserIntent') &&
@@ -255,7 +256,7 @@ const catalogOnly =
   profileBaseline.includes('allowedSymbols instanceof Set') &&
   !parser.includes(['submitted', 'config'].join('.')) &&
   !parser.includes('devices.json') && !parser.includes('config-manifest.json');
-if (catalogOnly) pass('Source/Branch/build tools, Kconfig, applications and schema-2/3/4/5 compatibility are Catalog-driven');
+if (catalogOnly) pass('Source/Branch/build tools, Kconfig, applications and schema-2/3/4/5/6 compatibility are Catalog-driven');
 else fail('Catalog-only execution contract');
 
 const minimalSchema6Target =
@@ -335,7 +336,9 @@ else fail('Workflow run-name YAML', runNameIssues.join('; '));
 
 const buildWorkflow = readFileSync(join(workflowDir, 'custom-build.yml'), 'utf8');
 const cancelWorkflow = readFileSync(join(workflowDir, 'cancel-build.yml'), 'utf8');
-if (buildWorkflow.includes('python3 python3-setuptools') && !buildWorkflow.includes('python3-distutils')) {
+if (buildWorkflow.includes('python3-setuptools') && buildWorkflow.includes('python3-pyelftools') &&
+    buildWorkflow.includes('/usr/bin/python3 -m venv --system-site-packages') &&
+    buildWorkflow.includes("import elftools; import setuptools") && !buildWorkflow.includes('python3-distutils')) {
   pass('Ubuntu 24.04 Python build dependencies are current');
 } else fail('Build dependency contract', 'use python3 + python3-setuptools; python3-distutils is unavailable');
 const retention = [...buildWorkflow.matchAll(/^\s*retention-days:\s*(\d+)\s*$/gm)].map((match) => Number(match[1]));

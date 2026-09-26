@@ -184,7 +184,7 @@ function openSubmitModal() {
         const plugins = finalSelection.normal.map((p) => p.id)
           .concat(finalSelection.forced.map((p) => '+' + p.id))
           .concat(finalSelection.removed.map((p) => '-' + p.id));
-        const config = await generateResolvedConfigText();
+        const config = preflight.config;
         const overrides = buildRequestOverrides(config);
         const payload = {
           schema: 6,

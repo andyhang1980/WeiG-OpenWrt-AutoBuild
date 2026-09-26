@@ -7,6 +7,7 @@
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import * as CATALOG_ENGINE from '../site/wrt/lib/catalog-engine.js';
+import * as PROFILE_BASELINE_MODULE from '../site/wrt/lib/profile-baseline.js';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -128,5 +129,47 @@ assert(runtime.menuValues.get('CHILD') === 'n' && runtime.menuTouched.has('CHILD
   runtime.menuValues.get('PACKAGE_target-plugin') === 'n' &&
   runtime.configurationPreflightEvaluation().initialViolations.length === 0,
   'the repair recommendation did not persist the disabled child or failed its second preflight');
+
+// Lazy display state is not the exported configuration. Validate and repair
+// the real native-baseline projection, including values absent from the menu.
+Object.assign(runtime, {
+  ACTIVE_PROFILE_BASELINE: { values: new Map([['CHILD', 'y'], ['TRIGGER', 'y'],
+    ['CONFLICT', 'n'], ['PACKAGE_target-plugin', 'y']]) },
+  PROFILE_BASELINE_MODULE,
+  importedConfigValues: new Map(), importedUnknownEdits: new Map(),
+  profilePackageOverrides: new Map(), menuSearchOptions: options,
+  menuCatalogKey: 'example/main',
+  selectedCatalogSource: () => ({ id: 'example' }),
+  selectedCatalogBranch: () => ({ branch: 'main' }),
+  currentTimezone: () => ({ zonename: 'UTC', timezone: 'UTC0' }),
+  effectiveSelection: () => ({ all: [], removed: [], normal: [], forced: [] }),
+});
+Object.assign(runtime.state, { source: { id: 'example' }, version: { id: 'main', branch: 'main' },
+  variant: { id: 'default' }, siteVersion: 'fixture' });
+runtime.menuValues.delete('CHILD');
+runtime.menuTouched.clear();
+runtime.catalogConditionalDefaultSymbols.clear();
+runtime.catalogDependencySymbols.clear();
+runtime.catalogUserOverrides.clear();
+runtime.catalogRecommendedValues.clear();
+runtime.menuTouched.add('TRIGGER');
+runtime.menuTouched.add('PACKAGE_target-plugin');
+runtime.catalogUserOverrides.set('TRIGGER', 'n');
+runtime.catalogUserOverrides.set('PACKAGE_target-plugin', 'n');
+vm.runInContext(readFileSync(new URL('../site/wrt/lib/config/config-generator.js', import.meta.url), 'utf8'), runtime);
+runtime.resolveCatalogTheme = () => ({ package: 'example-theme', changes: [] });
+runtime.markCatalogStateChanged();
+assert(runtime.configurationBlockingViolations(runtime.menuValues).length === 0,
+  'fixture must reproduce a clean menu over an invalid exported baseline');
+assert(runtime.configurationPreflightValues().get('CHILD') === 'y',
+  'preflight discarded a native baseline value missing from the menu');
+const exportedEvaluation = runtime.configurationPreflightEvaluation();
+assert(exportedEvaluation.initialViolations.length === 1 && exportedEvaluation.actions.length > 0,
+  `preflight did not detect and plan repair for the actual exported configuration: ${JSON.stringify({ violations: exportedEvaluation.initialViolations, actions: exportedEvaluation.actions })}`);
+runtime.applyConfigurationRecommendation(exportedEvaluation);
+assert(CATALOG_ENGINE.parseConfigDocument(runtime.buildFinalConfigText()).get('CHILD') === 'n',
+  'recommendation did not change the actual exported bytes');
+assert(runtime.configurationPreflightEvaluation().initialViolations.length === 0,
+  'a repeated check resurrected the repaired native-baseline value');
 
 console.log('menuconfig prerequisite direct-Intent replay passed');

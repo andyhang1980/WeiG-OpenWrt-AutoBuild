@@ -151,7 +151,7 @@ const schema6BuildContract = schema6BuildStart >= 0 && schema6BuildEnd > schema6
   ? app.slice(schema6BuildStart, schema6BuildEnd) : '';
 const ensureBuildPreflightAt = schema6BuildContract.indexOf('await ensureBuildPreflight()');
 const finalSelectionAt = schema6BuildContract.indexOf('const finalSelection = effectiveSelection();');
-const finalConfigAt = schema6BuildContract.indexOf('const config = await generateResolvedConfigText();');
+const finalConfigAt = schema6BuildContract.indexOf('const config = preflight.config;');
 const finalOverridesAt = schema6BuildContract.indexOf('const overrides = buildRequestOverrides(config);');
 const finalPayloadAt = schema6BuildContract.indexOf('const payload = {');
 const importConfigContract = app.match(/async function importConfigFile\(file\) \{([\s\S]*?)\n\}\n\$\('importBtn'/)?.[1] || '';

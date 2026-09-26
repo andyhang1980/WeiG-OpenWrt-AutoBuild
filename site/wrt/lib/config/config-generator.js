@@ -51,13 +51,31 @@ function applyMenuConfig(text) {
     const value = catalogBaselineValues.get(option.symbol);
     if (value !== undefined && value !== 'n' && value !== '') serialized.add(option.symbol);
   }
+  const replacements = new Map();
   for (const symbol of serialized) {
-    const option = menuOptionBySymbol.get(symbol);
-    if (option) text = setConfigSymbol(text, symbol,
-      !menuValues.has(symbol) && ['string', 'int', 'hex'].includes(option.type)
-        ? null : String(menuValues.get(symbol) ?? 'n'), option.type);
+    const record = typeof CATALOG_MODEL === 'undefined' ? null : CATALOG_MODEL?.bySymbol?.get(symbol);
+    const option = menuOptionBySymbol.get(symbol) || (record ? { ...record, symbol } : null);
+    if (!option) continue;
+    if (!menuValues.has(symbol) && ['string', 'int', 'hex'].includes(option.type)) {
+      replacements.set(symbol, null);
+    } else {
+      const value = serializeKconfigValue(String(menuValues.get(symbol) ?? 'n'), option.type, symbol);
+      replacements.set(symbol, value === null ? `# CONFIG_${symbol} is not set` : `CONFIG_${symbol}=${value}`);
+    }
   }
-  return text;
+  // One pass over the file, not one whole-file regex replacement per symbol.
+  // Unknown vendor entries and comments retain their original contents.
+  const emitted = new Set();
+  const lines = text.replace(/\r\n/g, '\n').split('\n').flatMap(line => {
+    const symbol = /^(?:CONFIG_([A-Za-z0-9_+@.\/-]+)=|# CONFIG_([A-Za-z0-9_+@.\/-]+) is not set$)/.exec(line);
+    const key = symbol?.[1] || symbol?.[2];
+    if (!key || !replacements.has(key)) return [line];
+    if (emitted.has(key)) return [];
+    emitted.add(key);
+    return replacements.get(key) === null ? [] : [replacements.get(key)];
+  });
+  for (const [symbol, line] of replacements) if (!emitted.has(symbol) && line !== null) lines.push(line);
+  return lines.join('\n').replace(/\n*$/, '\n');
 }
 function applyImportedUnknownEdits(text) {
   for (const [symbol, edit] of importedUnknownEdits) {
@@ -155,6 +173,13 @@ function configFirmwareSettings(text) {
 }
 
 async function generateConfigText() {
+  return buildFinalConfigText();
+}
+
+// Preflight and download consume this exact projection. Menu shards are a
+// display optimization; a value retained by the native baseline is still part
+// of the build even when no row for it has been rendered.
+function buildFinalConfigText() {
   if (state.device.id === 'catalog-target') {
     const source = selectedCatalogSource();
     const branch = selectedCatalogBranch(source);
@@ -264,7 +289,7 @@ async function downloadConfig(btn) {
   btn.disabled = true;
   btn.textContent = t('btn.download.busy');
   try {
-    const text = await generateResolvedConfigText();
+    const { config: text } = await ensureBuildPreflight();
     downloadBlob(text, 'text/plain;charset=utf-8',
       [state.device.id, localStamp(), state.source.id, state.version.id, state.variant.id].join('-') + '.config');
   } catch (err) {

@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { REQUIRED_KCONFIG_RELATION_CAPABILITIES } from '../site/wrt/lib/catalog-engine.js';
 import { parseConfigMap } from '../site/wrt/lib/profile-baseline.js';
 import { classifyActivePackages, bindConditionContext } from './verify-build-closure.mjs';
+import { pinnedFeedsConfig } from './install-catalog-feeds.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const temp = mkdtempSync(join(tmpdir(), 'weig-request-parser-'));
@@ -104,6 +105,12 @@ return new Response(Buffer.from(files[path],'base64'));};`);
   assert.equal(kinds.sourceCommit, req.catalog.sourceCommit);
   assert.match(kinds.graphHash, /^[a-f0-9]{64}$/);
   if (fixtures) {
+    const index = JSON.parse(Buffer.from(fixtures['index.json'], 'base64'));
+    const indexedBranch = index.sources[0].branches[0];
+    const receipt = JSON.parse(readFileSync(join(cwd, 'catalog-build-inputs.json'), 'utf8'));
+    assert.deepEqual(receipt, { buildInputs: indexedBranch.buildInputs || null,
+      inputsHash: indexedBranch.inputsHash || '' }, 'feed inputs must come from the pinned index');
+    if (receipt.buildInputs) assert.match(pinnedFeedsConfig(receipt.buildInputs, commit, receipt.inputsHash), /\^[a-f0-9]{40}\n$/);
     assert.deepEqual(kinds.nonPackageSymbols, ['PACKAGE_luci-theme-fixture_FEATURE']);
     assert.deepEqual([...classifyActivePackages(new Map([['luci-theme-fixture', 'y'],
       ['luci-theme-fixture_FEATURE', 'y'], ['unknown', 'y']]), kinds, req.catalog)],
@@ -148,6 +155,11 @@ function fixturesFor({ compact = false, declareSchema = false, mutate = () => {}
   return fixtures;
 }
 try {
+  runRequest(request, { fixtures: fixturesFor({ mutate: ({ index }) => {
+    const buildInputs = { schema: 1, sourceCommit: commit, feeds: [{ name: 'packages',
+      method: 'src-git', options: [], url: 'https://example.invalid/packages.git', commit: 'd'.repeat(40) }] };
+    Object.assign(index.sources[0].branches[0], { buildInputs, inputsHash: hash(JSON.stringify(buildInputs)) });
+  } }) });
   runRequest({ ...request, overrides: [['FEATURE', null]] }, { fixtures: fixturesFor() });
   const urls = process.argv.slice(2);
   if (urls.length) {

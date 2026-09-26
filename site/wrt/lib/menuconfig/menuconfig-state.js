@@ -99,7 +99,13 @@ function backfillCatalogBaselineForLoadedOptions() {
 function catalogInheritedValue(symbol) {
   if (state.importedConfig && menuImportedOriginal.has(symbol)) return menuImportedOriginal.get(symbol);
   if (catalogRecommendedValues.has(symbol)) return catalogRecommendedValues.get(symbol);
-  return catalogBaselineValues.get(symbol) ?? (menuOptionBySymbol.get(symbol)?.type === 'string' ? '' : 'n');
+  if (catalogBaselineValues.has(symbol)) return catalogBaselineValues.get(symbol);
+  if (typeof ACTIVE_PROFILE_BASELINE !== 'undefined' && ACTIVE_PROFILE_BASELINE?.values?.has(symbol)) {
+    const value = ACTIVE_PROFILE_BASELINE.values.get(symbol);
+    const record = CATALOG_MODEL?.bySymbol?.get(symbol);
+    return record?.type === 'string' ? CATALOG_ENGINE.decodeKconfigString(value) : value;
+  }
+  return menuOptionBySymbol.get(symbol)?.type === 'string' ? '' : 'n';
 }
 function catalogOriginMeta(option) {
   const symbol = option?.symbol || '';

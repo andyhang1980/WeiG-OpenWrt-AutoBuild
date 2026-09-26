@@ -316,6 +316,9 @@ if (indexedCommit && indexedCommit !== catalogContract.sourceCommit) {
   fail(`Catalog sourceCommit does not match the pinned index: index=${indexedCommit}, request=${catalogContract.sourceCommit}`);
 }
 const sourceCommit = catalogContract.sourceCommit;
+// Copy the immutable index's execution inputs, never client-supplied feed URLs.
+writeFileSync(String(process.env.CATALOG_BUILD_INPUTS_OUT || 'catalog-build-inputs.json'),
+  JSON.stringify({ buildInputs: catalogBranch.buildInputs || null, inputsHash: catalogBranch.inputsHash || '' }) + '\n');
 const activeCatalogRevision = catalogContract.revision;
 
 const targetContract = req.customTarget && typeof req.customTarget === 'object' && !Array.isArray(req.customTarget)

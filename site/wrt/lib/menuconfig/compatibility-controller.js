@@ -244,7 +244,15 @@ function openCatalogConflictModal(option, value, violations, openChildren = fals
   return true;
 }
 
-function configurationBlockingViolations(values = menuValues) {
+function configurationPreflightValues() {
+  if (typeof buildFinalConfigText === 'function' && typeof ACTIVE_PROFILE_BASELINE !== 'undefined' &&
+      ACTIVE_PROFILE_BASELINE && state.device?.id === 'catalog-target') {
+    return CATALOG_ENGINE.parseConfigDocument(buildFinalConfigText());
+  }
+  return menuValues;
+}
+
+function configurationBlockingViolations(values = configurationPreflightValues()) {
   if (!CATALOG_MODEL || !CATALOG_ENGINE?.validateConfig) return [];
   const context = catalogValidationContext(values, 'preflight');
   return CATALOG_ENGINE.validateConfig(
@@ -271,7 +279,7 @@ function configurationPreflightEvaluation() {
       values: new Map(menuValues), finalValues: new Map(menuValues), unresolved: [],
     };
   }
-  const context = catalogValidationContext(menuValues, 'preflight');
+  const context = catalogValidationContext(configurationPreflightValues(), 'preflight');
   const plan = CATALOG_ENGINE.deriveConfigurationRepairPlan(
     CATALOG_MODEL, context.values, {
       dependencySymbols: catalogDependencySymbols,
@@ -352,6 +360,10 @@ function configurationPreflightRows(evaluation) {
 function applyConfigurationRecommendation(evaluation) {
   const snapshot = snapshotCatalogUiState();
   try {
+    // Replay against the complete checked values without making baseline
+    // values explicit user intent.
+    if (evaluation.context?.values) restoreMap(menuValues, evaluation.context.values);
+    markCatalogStateChanged();
     for (const action of evaluation.actions || []) {
       if (action.kind === 'scalar') {
         applyMenuValue(menuOptionBySymbol.get(action.symbol), action.value, false, 'recommended');
@@ -620,7 +632,7 @@ function resolveCompatibilityIdentity(source, branch, loadedSource) {
 }
 
 function compatibilityContext() {
-  const catalog = catalogValidationContext(menuValues, 'interactive');
+  const catalog = catalogValidationContext(configurationPreflightValues(), 'interactive');
   const source = selectedCatalogSource();
   const branch = selectedCatalogBranch(source);
   const identity = resolveCompatibilityIdentity(source, branch, MENU_CATALOG?.source);
@@ -785,7 +797,7 @@ async function ensureBuildPreflight() {
     error.name = 'ConfigurationPreflightCancelledError';
     throw error;
   }
-  return { configuration, compatibility };
+  return { configuration, compatibility, config: await generateResolvedConfigText() };
 }
 
 function openCompatibilityWarningModal(evaluation, warning, plans) {

@@ -818,6 +818,28 @@ assert(compatibilitySchema5.compatibility.schema === 5 && compatibilitySchema5.c
   compatibilitySchema5.compatibility.rules[0].policy === 'preventive',
   'schema-5 preventive compatibility asset was not verified and decoded');
 
+// Publishing a newer recommendation contract must not break old clients.
+// New clients prefer the declared v6 asset and must not hide corruption by
+// silently falling back to the valid legacy projection.
+const v6Document = { schema: 6, rules: [] };
+const v6Payload = compressedDocument(v6Document);
+const v6Index = structuredClone(compatibilitySchema5Index);
+v6Index.assets.compatibilityV6 = { asset: 'compatibility.v6.json.gz', schema: 6, rules: 0,
+  hash: v6Payload.hash, bytes: v6Payload.bytes.length,
+  jsonBytes: new TextEncoder().encode(JSON.stringify(v6Document)).byteLength };
+let corruptV6 = false;
+const v6Loader = () => createCatalogLoader({ repository: 'owner/catalog', engine: { createCatalogModel },
+  fetchImpl: async url => url.includes('index.json') ? new Response(JSON.stringify(v6Index)) :
+    new Response(url.includes('compatibility.v6.json.gz')
+      ? corruptV6 ? new Uint8Array([1, 2]) : v6Payload.bytes : compatibilitySchema5Payload.bytes),
+  cacheStorage: fakeCaches(), subtle: null,
+});
+assert((await v6Loader().fetchCompatibility()).compatibility.schema === 6, 'v6 preference asset was not selected');
+corruptV6 = true;
+let v6Rejected = false;
+try { await v6Loader().fetchCompatibility(); } catch { v6Rejected = true; }
+assert(v6Rejected, 'corrupt declared v6 asset was silently downgraded');
+
 const applicationsDocument = {
   schema: 1,
   groups: ['Network'],

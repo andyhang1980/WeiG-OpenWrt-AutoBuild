@@ -120,6 +120,28 @@ const directCatalog = catalogWith([
   'PACKAGE_target-app': ['PACKAGE_translation-addon', 'PACKAGE_reverse-dependent'],
 });
 const directModel = createCatalogModel(directCatalog);
+const preferenceDocument = { schema: 6, rules: [{
+  id: 'OWN-PREFERENCE', issue: 'file-ownership', match: 'all-installed', policy: 'preventive',
+  environments: [{ source: '*', branch: '*', packageAvailability: 'if-present', targetScope: {} }],
+  evidence: [{ source: 'Demo', branch: 'stable', sourceCommit: 'a'.repeat(40), refs: ['run:1'] }],
+  packages: ['target-app', 'unrelated-app'], paths: ['/etc/shared'], preferredDisable: ['unrelated-app'],
+}] };
+const preferenceValues = new Map([['PACKAGE_target-app', 'y'], ['PACKAGE_unrelated-app', 'y']]);
+for (const sourceId of ['Demo', 'AnotherSource']) {
+  const context = { sourceId, branchName: 'future' };
+  const warning = evaluateCompatibilityRules(directModel, preferenceDocument, preferenceValues, context).warnings[0];
+  const preferred = deriveCompatibilityPlans(directModel, preferenceValues, warning).recommended;
+  assert.equal(preferred?.package, 'unrelated-app');
+  assert.equal(preferred.values.get('PACKAGE_target-app'), 'y');
+  assert.equal(evaluateCompatibilityRules(directModel, preferenceDocument, preferred.values, context).warnings.length, 0);
+  const moduleOnly = new Map(preferenceValues); moduleOnly.set('PACKAGE_unrelated-app', 'm');
+  assert.equal(evaluateCompatibilityRules(directModel, preferenceDocument, moduleOnly, context).warnings.length, 0);
+}
+const noPreference = structuredClone(preferenceDocument);
+delete noPreference.rules[0].preferredDisable;
+const ambiguous = evaluateCompatibilityRules(directModel, noPreference, preferenceValues,
+  { sourceId: 'Demo', branchName: 'stable' }).warnings[0];
+assert.equal(deriveCompatibilityPlans(directModel, preferenceValues, ambiguous).recommended, null);
 const directValues = parseConfigDocument([
   'CONFIG_PACKAGE_target-app=y',
   'CONFIG_PACKAGE_translation-addon=y',
