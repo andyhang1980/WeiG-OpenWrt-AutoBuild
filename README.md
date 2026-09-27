@@ -25,6 +25,14 @@ Large imports reuse snapshot-local dependency indexes and yield between ordered 
 
 ## Cloning and project configuration
 
+New Catalog snapshots also pin the ordered feed URLs, methods, options and commits.
+The Worker installs those exact feeds through upstream tooling instead of silently
+following newer feed branches. Test and export validate the actual serialized
+configuration; recommendations update that same effective state before export.
+Schema-6 compatibility preferences use the shared planner, with older Catalog
+schemas and historical configuration imports still supported. These checks do not
+guarantee a successful firmware compilation or add a general dependency gate.
+
 Maintain two configuration sources with separate responsibilities after cloning:
 
 - `site/wrt/config/site.json` is the sole public-site configuration source. It contains branding, Catalog location and selection/loading policy, web appearance, firmware defaults, and the default build tag. The browser reads this file only.

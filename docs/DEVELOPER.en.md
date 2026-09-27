@@ -25,6 +25,31 @@ fixture. These tests are not firmware builds. Never silently redirect a historic
 request to another snapshot; importing its configuration and generating a new
 request is the supported migration path.
 
+## Snapshot inputs and the serialized configuration boundary
+
+- `tools/parse-request.mjs` obtains `buildInputs` from the trusted immutable Catalog
+  index, not a client-supplied dependency list. `tools/install-catalog-feeds.mjs`
+  preserves feed order/method/options, pins each Git revision, delegates to upstream
+  `scripts/feeds`, and verifies the installed revisions. Source and feeds must match
+  the data used for the Native baseline and relations; never repair drift by pulling
+  latest branches. A new Worker requires a valid receipt; an old configuration can
+  still be imported and exported against the current complete snapshot. An old
+  request retains its pinned Worker and is not silently redirected.
+- Preflight and submission check the same final serialized configuration. Apply
+  resolved values once, hydrate recommendation state from the checked effective
+  configuration, and verify the actual exported document rather than an intermediate
+  map. Rollback, forced continuation and historical imports retain their existing
+  contracts. No package/source-specific serializer or general Worker dependency
+  validation pass is introduced.
+- Compatibility schema 6 adds `preferredDisable` as a shared planner preference;
+  readers retain schemas 2–5. Catalog publishes the old schema-5 asset alongside the
+  advertised schema-6 asset; do not reinterpret a preference as a new dependency.
+- Host Python tooling uses the installed `pyelftools` through the compatible virtual
+  environment. This is build-host provisioning, not a target package dependency.
+- Regressions cover pinned feed installation, missing/invalid receipts, recommendation →
+  second Test → exact export, and native graph reading. Browser and CI success are
+  not evidence that every firmware or upstream combination compiles.
+
 ## Responsive configuration operations
 
 - Default-worklist dependency structure is cached in a WeakMap per immutable model, never current resolved values. Every intent still runs the same shared Kconfig evaluation in the same order. A new snapshot/model gets a new index.

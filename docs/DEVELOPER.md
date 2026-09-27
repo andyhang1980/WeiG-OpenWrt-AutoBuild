@@ -1,5 +1,21 @@
 # 开发者指南
 
+## 快照输入与实际序列化配置边界
+
+- `tools/parse-request.mjs` 从可信不可变 Catalog index 读取 `buildInputs`，不信任客户端
+  依赖清单。`tools/install-catalog-feeds.mjs` 保留 feeds 顺序、方法与选项，固定 Git 提交，
+  委托上游 `scripts/feeds` 安装并核对实际提交。源码和 feeds 必须对应生成 Native 基线与
+  relations 的输入，不能靠拉最新分支修复漂移。新 Worker 要求有效凭据；历史配置仍可导入
+  并绑定当前完整快照重新导出。旧请求保留其锁定 Worker，不静默换到新快照。
+- 预检和提交检查同一份最终序列化配置。有效值只应用一次，推荐从已检查有效状态恢复
+  工作区，再验证真实导出文档，不以中间 Map 代替。保留回滚、强制继续与历史导入能力，
+  不增加按包/源码分叉的序列化器，也不增加通用 Worker 依赖验证步骤。
+- compatibility schema 6 的 `preferredDisable` 只是共享 planner 的推荐偏好，继续兼容
+  schema 2–5；Catalog 并存旧 schema-5 资产和新 schema-6 资产，不把偏好当作依赖。
+- Host Python 通过兼容虚拟环境使用已安装的 `pyelftools`；这是主机构建环境，不是目标包依赖。
+- 回归覆盖精确 feeds、缺失/非法凭据、推荐→再次自检→实际导出与原生图读取。浏览器和 CI 通过
+  不代表全部上游组合或固件均编译成功。
+
 ## 原生构建闭包的类型边界
 
 - 复用共享 Kconfig 解析/求值器。请求解析器从已验证图生成任务内 `conditionContext`，随现有快照绑定的符号凭据传递。已知 bool/tristate 省略值按 N；未知符号、缺失 scalar 和非法表达式仍待定。不为通过检查改 `.config` 或隐式运行 Defconfig。
