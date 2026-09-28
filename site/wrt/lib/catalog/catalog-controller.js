@@ -163,6 +163,15 @@ function validateCatalogPackageSizes(document, catalog = MENU_CATALOG) {
   }
   return document;
 }
+function catalogObservedPackageSizes() {
+  const document = catalogPackageSizesDocument;
+  const source = MENU_CATALOG?.source;
+  const architecture = CATALOG_ENGINE.decodeKconfigString(String(catalogEngineValues().get('TARGET_ARCH_PACKAGES') || ''));
+  if (!source || !architecture || document?.source?.id !== source.id ||
+      document.source.branch !== source.branch || document.source.commit !== source.commit ||
+      document.observation?.architecture !== architecture) return new Map();
+  return catalogPackageSizeMap(document);
+}
 function validateCatalogBranchApplications(catalog) {
   const required = Array.isArray(catalog?.capabilities) &&
     catalog.capabilities.includes('branch-applications-v1');
@@ -194,7 +203,7 @@ function validateCatalogBranchApplications(catalog) {
 }
 function catalogApplicationsPluginData(document, catalog = MENU_CATALOG) {
   const metadata = new Map((document?.items || []).map((item) => [item.package, item]));
-  const sizes = catalogPackageSizeMap();
+  const sizes = catalogObservedPackageSizes();
   const branchRows = catalog?.applications?.kind === 'branch-applications' &&
     catalog.applications?.encoding === 'positional-rows-v1' &&
     JSON.stringify(catalog.applications?.fields) === JSON.stringify(['symbol', 'package', 'group', 'hot'])
@@ -212,7 +221,7 @@ function catalogApplicationsPluginData(document, catalog = MENU_CATALOG) {
         hot: hot === 1 || item.hot === true,
         archiveBytes: observed?.archiveBytes ?? null,
         installedBytes: observed?.installedBytes ?? null,
-        sizeBytes: observed?.installedBytes ?? observed?.archiveBytes ?? null,
+        sizeBytes: observed?.installedBytes ?? null,
         name: item.titleZh || item.titleEn || packageName,
         desc: item.usageZh || item.usageEn || '',
         nameI18n: { en: item.titleEn || packageName, 'zh-CN': item.titleZh || '', ...(item.titleI18n || {}) },

@@ -148,6 +148,14 @@ browser zoom.
   only its expanded item list may scroll on a short viewport.
 - The wide filter preset may use up to 760px and 78dvh on desktop, then falls
   back to a single-column, viewport-width panel on narrow screens.
+- Cloud submission uses the shared wide modal at up to 960px: a three-column
+  summary above a two-column action grid, with the primary request action on
+  the left and the import/config-download alternatives on the right. On narrow
+  screens all actions stack. The header stays outside the scrollable body;
+  every action remains reachable without page zoom or horizontal scrolling.
+- RootFS size advisories reuse warning/danger tokens at 50%/80% estimated
+  installed-package occupancy. The text states the percentage and identifies
+  partial coverage; color alone must not imply a complete image-size estimate.
 - Use `:focus-visible`, keyboard Escape handling supplied by the runtime,
   focus restoration, readable labels, and reduced-motion behavior.
 - Maintain readable contrast in both themes and under increased contrast mode.

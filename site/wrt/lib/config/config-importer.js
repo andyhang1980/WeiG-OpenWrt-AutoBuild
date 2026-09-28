@@ -503,7 +503,9 @@ function prepareSchema6SafeOverrides(overrides) {
     }
     let value;
     try {
-      value = rawValue === null ? null : normalizeKconfigValueByType(rawValue, option.type, symbol);
+      // Schema-6 overrides carry .config wire values, not editor strings.
+      // Decode at the same boundary as .config imports; export encodes once.
+      value = rawValue === null ? null : normalizeImportedKconfigValue({ value: rawValue }, option.type);
     } catch (error) {
       throw new Error(`Invalid value for ${symbol}: ${error.message}`);
     }

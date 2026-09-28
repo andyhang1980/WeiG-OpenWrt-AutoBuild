@@ -16,11 +16,11 @@ function pluginState(p) {
   if (p.catalogOnly) {
     if (state.device?.id !== 'catalog-target' || !MENU_CATALOG) return 'unavailable';
     const option = curatedMenuOption(p);
-    return option && optionVisible(option) ? 'ok' : 'unavailable';
+    return option && catalogPackageRecordForSymbol(option.symbol) && optionVisible(option) ? 'ok' : 'unavailable';
   }
   if (state.device?.id === 'catalog-target' && MENU_CATALOG) {
     const option = curatedMenuOption(p);
-    return option && optionVisible(option) ? 'ok' : 'unavailable';
+    return option && catalogPackageRecordForSymbol(option.symbol) && optionVisible(option) ? 'ok' : 'unavailable';
   }
   if (state.source.append) return 'ok';   // append 模式产线:所有插件按追加方式可勾 / append-mode source: every plugin is selectable by appending
   if (!p.pkgs?.[state.source.id] && !p.pkg) return 'unavailable';
@@ -392,27 +392,38 @@ function rootfsPartitionInfo() {
 }
 function packageSizeEstimate() {
   if (state.device?.id !== 'catalog-target' || !MENU_CATALOG || !catalogPackageSizesDocument) return null;
-  const sizes = catalogPackageSizeMap(catalogPackageSizesDocument);
+  const sizes = catalogObservedPackageSizes();
+  if (![...sizes.values()].some((row) => Number.isSafeInteger(row.installedBytes))) return null;
+  const values = catalogEngineValues();
   const direct = new Set();
   for (const [symbol, value] of catalogUserOverrides) {
-    if (symbol.startsWith('PACKAGE_') && value !== 'n') direct.add(symbol.slice('PACKAGE_'.length));
+    const record = catalogPackageRecordForSymbol(symbol);
+    if (record && value === 'y' && values.get(symbol) === 'y') direct.add(record.package);
   }
   const total = new Set();
-  for (const [symbol, value] of catalogEngineValues()) {
-    if (symbol.startsWith('PACKAGE_') && value !== 'n') total.add(symbol.slice('PACKAGE_'.length));
+  for (const [symbol, value] of values) {
+    const record = catalogPackageRecordForSymbol(symbol);
+    if (record && value === 'y') total.add(record.package);
   }
   const summarize = (names) => {
     let knownBytes = 0;
     let unknown = 0;
     for (const name of names) {
       const row = sizes.get(name);
-      const value = row?.installedBytes ?? row?.archiveBytes;
+      const value = row?.installedBytes;
       if (Number.isSafeInteger(value) && value >= 0) knownBytes += value;
       else unknown++;
     }
     return { packages: names.size, knownBytes, unknown };
   };
   return { direct: summarize(direct), total: summarize(total) };
+}
+function packageSizeCapacityStatus(summary, capacityMiB) {
+  const bytes = summary?.total?.knownBytes;
+  if (!Number.isFinite(bytes) || !Number.isFinite(capacityMiB) || capacityMiB <= 0) return null;
+  const percent = bytes / (capacityMiB * 1024 * 1024) * 100;
+  return { percent: Math.round(percent), level: percent >= 80 ? 'danger' : percent >= 50 ? 'warning' : '',
+    partial: summary.total.unknown > 0 };
 }
 function packageSizeSummaryValue(summary, formatted) {
   if (!summary?.packages || !summary.unknown) return formatted;
@@ -506,6 +517,7 @@ function openRootfsCapacityGuidance() {
   edit.type = 'button';
   edit.className = 'btn btn-primary';
   edit.textContent = t('runtime.2195ea1653d1');
+  edit.disabled = info.option.userSettable === false || info.option.hidden === true;
   edit.onclick = async () => {
     closeModal();
     try {
@@ -525,6 +537,9 @@ function updateStats() {
   const rootfs = rootfsPartitionInfo();
   const packageSizes = packageSizeEstimate();
   const capText = $('capText');
+  const capacity = packageSizeCapacityStatus(packageSizes, rootfs?.value);
+  capText.classList.toggle('capacity-warning', capacity?.level === 'warning');
+  capText.classList.toggle('capacity-danger', capacity?.level === 'danger');
   if (rootfs) {
     $('capBox').hidden = true;
     capText.disabled = false;
@@ -532,9 +547,13 @@ function updateStats() {
     capText.textContent = packageSizes
       ? `${rootfs.value} MiB · ${packageSizeEstimateText(packageSizes)}`
       : `${rootfs.value} MiB`;
+    if (capacity?.level) capText.textContent += ' · ' + t('size.capacity.short', {
+      percent: `${capacity.partial ? '≥' : ''}${capacity.percent}`,
+    });
     bindUiTooltipContent(capText, { body: [
       t('runtime.2b2a5917809a'),
-      packageSizeEstimateTooltip(packageSizes),
+      packageSizes ? packageSizeEstimateTooltip(packageSizes) : t('size.summary.unavailable'),
+      capacity?.level ? t(capacity.partial ? 'size.capacity.partial' : 'size.capacity.warning', { percent: capacity.percent }) : '',
     ].filter(Boolean).join('\n') });
   } else if (packageSizes) {
     $('capBox').hidden = true;
@@ -543,19 +562,13 @@ function updateStats() {
     capText.textContent = packageSizeEstimateText(packageSizes);
     bindUiTooltipContent(capText, { body: packageSizeEstimateTooltip(packageSizes) });
   } else {
-    $('capBox').hidden = false;
+    $('capBox').hidden = true;
     capText.disabled = true;
     capText.classList.remove('rootfs-capacity');
-    const knownBytes = sel.all.reduce((sum, plugin) => sum + (plugin.sizeBytes || 0), 0);
-    const unknownCount = sel.all.filter((plugin) => !plugin.sizeBytes).length;
     $('capFill').style.width = '0';
     $('capFill').className = 'cap-fill';
-    capText.textContent = knownBytes
-      ? `${t('runtime.5d97d13c4b9d')} ${fmtSize(knownBytes)}`
-      : t('runtime.df187d1a812b');
-    bindUiTooltipContent(capText, { body: unknownCount
-      ? t('runtime.9fa9e63322ab', { value1: unknownCount })
-      : t('runtime.a6286fdab37d') });
+    capText.textContent = t('size.summary.unavailable');
+    bindUiTooltipContent(capText, { body: t('size.summary.unavailable') });
   }
   updateGroupBadges();
   renderBuildContract();

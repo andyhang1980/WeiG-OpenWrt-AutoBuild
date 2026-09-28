@@ -118,7 +118,7 @@ function firstMeaningfulProbeV3Text(...values) {
 }
 function probeV3ChoiceFromMenuOption(option) {
   const symbol = String(option?.symbol || '');
-  const packageName = symbol.startsWith('PACKAGE_') ? symbol.slice('PACKAGE_'.length) : '';
+  const packageName = catalogPackageRecordForSymbol(symbol)?.package || '';
   const translation = menuOptionTranslation(option);
   return {
     symbol,
@@ -135,7 +135,7 @@ function probeV3PackageChoices(query = '') {
   const options = normalized.length >= 2
     ? searchMenuOptionsSync(normalized)
     : rankMenuSearchOptions(
-      menuSearchOptions.filter((option) => String(option?.symbol || '').startsWith('PACKAGE_')),
+      menuSearchOptions.filter((option) => catalogPackageRecordForSymbol(option?.symbol)),
       normalized,
     );
   return options

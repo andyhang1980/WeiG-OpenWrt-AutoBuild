@@ -133,13 +133,17 @@ Public `site/wrt/data/` contains deployment identity, UI i18n, timezones, and ru
 
 ## 3. Catalog applications and sizes
 
-The manually invoked Catalog refresh tool audits LuCI application IDs across OpenWrt main, ImmortalWrt master, and LEDE master, then keeps their union. Equal IDs are one application. This list does not change automatically with weekly Source/Branch refreshes because descriptions and translations require review.
+The active branch's native package metadata and LuCI Kconfig options determine selectable applications. Global application metadata supplies reviewed names, descriptions and groups, not availability. A `PACKAGE_` prefix alone does not identify a package: application cards, Probe roots and size accounting share the Catalog model's concrete package lookup. Configuration suboptions stay in Advanced menuconfig. Target-dependent visibility uses the existing Kconfig evaluator; missing translated group labels fall back to the upstream label rather than an internal translation key.
 
-Catalog publishes `applications.json.gz` with groups, Chinese/English descriptions, and optional `sizeBytes`. The browser must not add package mappings. Official OPKG `Packages` and APK `packages.adb` samples produce dependency-closure observations; Catalog keeps a conservative cross-source value in bytes. The UI formats three significant digits in B/KiB/MiB/GiB and explicitly reports unknown observations.
+RootFS accounting uses Catalog's branch-specific package-size observations, matching Source/Branch/commit and `TARGET_ARCH_PACKAGES`. Use installed bytes only, never archive bytes or cross-source estimates. Direct selection counts explicit `y` packages still resolved to `y`; total counts all resolved `y` concrete packages, including dependencies, once. `m` packages and configuration suboptions do not occupy RootFS. Missing observations are not zero: hide the estimate when no matching installed-size dataset exists, and report partial coverage otherwise. At 50%/80% of RootFS show yellow/red advisory text; offer the existing capacity editor only when editable. These sums are not a prediction of compressed image size or a build gate.
 
 Catalog's daily translation workflow owns Advanced menu descriptions. It enumerates legacy bundles and schema-6 `menu:<lang>` shards precisely from the data-branch `index.json`, sparse-fetches only those files, and updates both representations. It must not scan or rewrite `core/graph/applications/compatibility`. The default schedule is 04:37 Asia/Shanghai with five batches. Future Source/Branch entries join through the index without a workflow version list.
 
 ## 4. Kconfig state and serialization
+
+Compatibility `if-present` applies to the complete rule: a missing participant makes an `all-*` rule inapplicable, never a weaker one-package rule. A schema-6 `preferredDisable` recommendation must pass the shared planner; if blocked, explain why instead of silently removing another participant. Historical schema-5 projections remain readable but cannot convey the newer preference.
+
+Schema-6 import values are serialized Kconfig tokens. Decode scalar strings once at the import boundary, edit semantic values, and encode once on export, including when migrating old snapshots. Worker reconstruction continues consuming the same canonical tokens; it must not repair quoting or infer user intent.
 
 Curated and Advanced inputs share one intent path:
 

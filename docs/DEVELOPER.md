@@ -113,11 +113,15 @@ node tools/prepare-web-deployment.mjs --commit <40位SHA> --branch <dev或main>
 
 ## 3. Catalog 应用与体积
 
-全局精选应用由 Catalog 的人工刷新工具审计 OpenWrt main、ImmortalWrt master 和 LEDE master 的 LuCI application ID 并求并集；ID 相同即视为同一应用。名单不随每周 Source/Branch 更新自动变化，避免介绍和翻译失控。
+可选应用由当前分支的原生软件包元数据与 LuCI Kconfig 选项决定。全局应用元数据只补充人工审阅的名称、介绍、分组，不决定可用性。`PACKAGE_` 前缀不能证明是软件包：应用卡片、探针 Root、容量统计共用 Catalog model 的真实包索引；配置子选项保留在 Advanced menuconfig。Target 可见性复用现有 Kconfig 求值器；分组缺少翻译时显示上游原名，不暴露内部翻译键。
 
-Catalog 发布 `applications.json.gz`，包含分组、中文/英文介绍和可选 `sizeBytes`。页面不得额外映射包名。体积由官方 OPKG `Packages` 与 OpenWrt/ImmortalWrt APK `packages.adb` 样本计算依赖闭包后跨源取保守值；原始单位为 bytes，页面按 B/KiB/MiB/GiB 动态显示三位有效数字。无可靠样本时显示未知，不得伪造 1MB 或机型回退值。
+RootFS 统计使用 Catalog 的分支包大小观测，必须匹配当前 Source/Branch/commit 与 `TARGET_ARCH_PACKAGES`，只累加 installed bytes，不以下载压缩包大小或跨源估值替代。自选计显式 `y` 且最终仍为 `y` 的真实包；总计计最终全部 `y` 的真实包及依赖，每包一次。`m` 与配置子选项不计入 RootFS。没有匹配的安装大小数据就隐藏估值；部分缺失则明确标注未知，不能当作 0。占 RootFS 50%/80% 时显示黄/红色文字提示，可编辑时才提供现有容量编辑入口。这是安装大小提示，不是压缩镜像预测或构建门禁。
 
 Advanced 的菜单说明由 Catalog 每日翻译任务维护。翻译器按数据分支 `index.json` 精确枚举旧单体和 schema 6 `menu:<lang>` 分片，只稀疏读取这些文件，并同步两类资产；不得扫描或改写 `core/graph/applications/compatibility`。默认上海时间 04:37、每次 5 批。未来 Source/Branch 经 index 自动进入翻译，不在 Workflow 写版本清单。
+
+兼容性 `if-present` 针对完整规则：缺少任一参与包时，`all-*` 规则整体不适用，不能弱化为单包规则。schema 6 的 `preferredDisable` 仍须经共享 planner 验证；无法执行时说明原因，不自动转而取消另一参与包。历史 schema 5 投影继续可读，但不携带新推荐偏好。
+
+schema 6 导入值是已序列化的 Kconfig token：字符串在导入边界解码一次，编辑语义值，导出编码一次；旧快照迁移同样适用。Worker 继续读取同一规范 token，不负责修复引号或猜测用户意图。
 
 ## 4. Kconfig 状态与序列化
 
@@ -143,7 +147,7 @@ schema 4 compact relations 会在 compact 编解码 round-trip 中保留 typed d
 
 ## 5. compatibility schema 2/3/4/5
 
-规则文档接受 schema 2–5。schema 2 保留旧规则形状；schema 3 可增加 `sourceCommits`、`targetScope` 和结构化 `failure`；schema 4 可增加规则级 `buildDependency`，并要求精确 `sourceCommits`。schema 5 还允许 `policy: "preventive"`：`environments` 独立定义通配适用范围，`packageAvailability: "if-present"` 使缺少失败目标的环境直接不适用，`evidence` 则只保存真实观察到故障的精确 Source、Branch、提交和引用。schema 4 的软件包构建依赖规则只有在精确 Catalog 图证明“活动软件包根 → 失败包”的路径时才命中；旧 `triggerPackages` 只为读取旧文档保留，不提供新的图触发入口。共享 Kconfig 执行器会生成解除全部当前活动参与者的最少有序步骤，缺失参与者既不报错也不进入方案。普通规则的 Source 可为具体 ID 或单独的 `*`，Branch 可为精确名或 glob。浏览器必须保留实际 schema，并校验 index 合同的 schema、SHA-256、压缩字节数、JSON 字节数和规则数。
+规则文档接受 schema 2–6。schema 2 保留旧规则形状；schema 3 可增加 `sourceCommits`、`targetScope` 和结构化 `failure`；schema 4 可增加规则级 `buildDependency`，并要求精确 `sourceCommits`。schema 5 还允许 `policy: "preventive"`：`environments` 独立定义通配适用范围，`packageAvailability: "if-present"` 使缺少失败目标的环境直接不适用，`evidence` 则只保存真实观察到故障的精确 Source、Branch、提交和引用。schema 4 的软件包构建依赖规则只有在精确 Catalog 图证明“活动软件包根 → 失败包”的路径时才命中；旧 `triggerPackages` 只为读取旧文档保留，不提供新的图触发入口。共享 Kconfig 执行器会生成解除全部当前活动参与者的最少有序步骤，缺失参与者既不报错也不进入方案。普通规则的 Source 可为具体 ID 或单独的 `*`，Branch 可为精确名或 glob。浏览器必须保留实际 schema，并校验 index 合同的 schema、SHA-256、压缩字节数、JSON 字节数和规则数。
 
 执行器固定为：
 

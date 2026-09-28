@@ -70,8 +70,51 @@ assert.equal(summaryValue({ packages: 0, knownBytes: 0, unknown: 0 }, '0 B'), '0
   'an empty selection may remain zero');
 assert.match(pluginController, /return \{ direct: summarize\(direct\), total: summarize\(total\) \};/,
   'package-size aggregation must retain separate direct and total sets');
-assert.match(pluginController, /const sizes = catalogPackageSizeMap\(catalogPackageSizesDocument\);/,
+assert.match(pluginController, /const sizes = catalogObservedPackageSizes\(\);/,
   'package-size aggregation must use the active shard only');
+
+const extract = (source, name) => source.match(new RegExp(`(function ${name}\\([^]*?\\n\\})`))?.[1];
+const stateSource = read('site/wrt/lib/menuconfig/menuconfig-state.js');
+const catalogSource = moduleSources['site/wrt/lib/catalog/catalog-controller.js'];
+const records = ['app', 'lib', 'module', 'archive-only'].map((name) => ({ package: name, configSymbol: `PACKAGE_${name}` }));
+const model = { bySymbol: new Map(records.map((r) => [r.configSymbol, r])), byPackage: new Map(records.map((r) => [r.package, r])) };
+model.bySymbol.set('PACKAGE_app_INCLUDE_data', { configSymbol: 'PACKAGE_app_INCLUDE_data', type: 'bool' });
+const values = new Map([['TARGET_ARCH_PACKAGES', 'test_arch'], ['PACKAGE_app', 'y'], ['PACKAGE_lib', 'y'],
+  ['PACKAGE_module', 'm'], ['PACKAGE_app_INCLUDE_data', 'y'], ['PACKAGE_archive-only', 'y']]);
+const sizeContext = { state: { device: { id: 'catalog-target' } },
+  MENU_CATALOG: { source: { id: 'test', branch: 'stable', commit: 'a' } },
+  CATALOG_MODEL: model, CATALOG_ENGINE: { decodeKconfigString: (s) => s.replace(/^"|"$/g, '') },
+  catalogEngineValues: () => values,
+  catalogUserOverrides: new Map([['PACKAGE_app', 'y'], ['PACKAGE_module', 'm'], ['PACKAGE_app_INCLUDE_data', 'y']]),
+  catalogPackageSizesDocument: { source: { id: 'test', branch: 'stable', commit: 'a' },
+    observation: { architecture: 'test_arch' }, rows: [['app', 10, 60], ['lib', 5, 25], ['module', 100, 1000], ['archive-only', 9000, null]] },
+};
+vm.createContext(sizeContext);
+vm.runInContext([
+  extract(stateSource, 'catalogConflictRecordForPackage'), extract(stateSource, 'catalogPackageRecordForSymbol'),
+  extract(catalogSource, 'catalogPackageSizeMap'), extract(catalogSource, 'catalogObservedPackageSizes'),
+  extract(pluginController, 'packageSizeEstimate'), extract(pluginController, 'packageSizeCapacityStatus'),
+].join('\n'), sizeContext);
+assert.equal(sizeContext.catalogPackageRecordForSymbol('PACKAGE_app_INCLUDE_data'), null);
+let estimated = sizeContext.packageSizeEstimate();
+assert.equal(estimated.direct.packages, 1);
+assert.equal(estimated.direct.knownBytes, 60);
+assert.equal(estimated.total.packages, 3);
+assert.equal(estimated.total.knownBytes, 85);
+assert.equal(estimated.total.unknown, 1, 'archive size is not installed size');
+values.set('TARGET_ARCH_PACKAGES', 'other_arch');
+assert.equal(sizeContext.packageSizeEstimate(), null, 'do not borrow another architecture');
+values.set('TARGET_ARCH_PACKAGES', 'test_arch');
+sizeContext.catalogPackageSizesDocument.source.commit = 'b';
+assert.equal(sizeContext.packageSizeEstimate(), null, 'do not borrow another snapshot');
+sizeContext.catalogPackageSizesDocument.source.commit = 'a';
+sizeContext.catalogPackageSizesDocument.rows = [['app', 1, null]];
+assert.equal(sizeContext.packageSizeEstimate(), null, 'hide unavailable installed-size estimates');
+for (const [percent, level] of [[49, ''], [50, 'warning'], [79, 'warning'], [80, 'danger'], [101, 'danger']]) {
+  const report = sizeContext.packageSizeCapacityStatus({ total: { knownBytes: percent * 1024 * 1024, unknown: 1 } }, 100);
+  assert.equal(report.level, level); assert.equal(report.partial, true);
+}
+assert.equal(sizeContext.packageSizeCapacityStatus(null, 160), null);
 
 const sourceJson = JSON.parse(read('tools/i18n-source.json'));
 const translationJson = JSON.parse(read('tools/i18n-translations.json'));

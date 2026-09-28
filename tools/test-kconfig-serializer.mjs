@@ -203,4 +203,28 @@ const wire = JSON.parse(JSON.stringify(diffProfileBaseline(baseline, finalValues
 assert.deepEqual(applyProfileOverrides(baseline, wire, { allowedSymbols }), finalValues,
   'effective defaults must survive browser serialization, JSON, and Worker baseline reconstruction');
 
+// Old schema-6 requests use the same quoted wire grammar as .config. Migrate
+// through the real import helper, then export and reconstruct without drift.
+vm.runInContext(source.slice(source.indexOf('const IMPORT_KCONFIG_SYMBOL_RE'),
+  source.indexOf('\nfunction schema6PluginActionRows')) + '\n' +
+  source.slice(source.indexOf('function prepareSchema6SafeOverrides('),
+    source.indexOf('\nasync function applySchema6MigrationPlan(')), context);
+context.ACTIVE_PROFILE_BASELINE = { protectedSymbols: new Set() };
+context.isCatalogTargetSymbol = () => false;
+for (const [type, semantic] of [
+  ['string', 'OpenWrt'], ['string', ''], ['string', '"quoted"'],
+  ['string', String.raw`path\with\slashes`], ['string', '中文'], ['string', 'n'],
+  ['int', '512'], ['hex', '0x40'],
+]) {
+  const symbol = 'EXAMPLE_VALUE';
+  context.menuOptionBySymbol.set(symbol, { symbol, type });
+  const encoded = serializeKconfigValue(semantic, type);
+  const { safe } = context.prepareSchema6SafeOverrides([[symbol, encoded]]);
+  assert.equal(safe[0][1], semantic);
+  const serialized = serializeKconfigValue(safe[0][1], type);
+  assert.equal(serialized, encoded, `${type}: migration must not double-encode`);
+  assert.equal(applyProfileOverrides({ values: new Map(), protectedSymbols: new Set() },
+    [[symbol, serialized]], { allowedSymbols: new Set([symbol]) }).get(symbol), encoded);
+}
+assert.equal(context.prepareSchema6SafeOverrides([['EXAMPLE_VALUE', null]]).safe[0][1], null);
 console.log('Kconfig serializer hardening matrix: PASS');

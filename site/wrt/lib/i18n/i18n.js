@@ -253,4 +253,8 @@ function displayConfigSymbol(symbol, options = {}) {
   if (!['config', 'package'].includes(identity.kind)) return displayText(identity.raw);
   return displayText(`CONFIG_${identity.configSymbol}`);
 }
-const groupLabel = (g) => displayText(t('group.' + g));
+const groupLabel = (g) => {
+  const key = 'group.' + g;
+  const translated = t(key);
+  return displayText(translated === key ? g : translated);
+};

@@ -135,11 +135,12 @@ function openSubmitModal() {
   const title = titlePrefix + titleTag + titleSuffix;
 
   openModal(t('btn.submit'));
+  $('modal').querySelector('.modal').classList.add('modal-wide', 'submit-confirmation');
   const mb = $('modalBody');
   mb.textContent = '';
   const sum = document.createElement('div');
-  sum.className = 'summary-box';
-  sum.textContent = t('submit.confirm', {
+  sum.className = 'summary-box summary-grid';
+  const summary = t('submit.confirm', {
     brand: state.device.brand, device: state.device.name, source: state.source.label,
     version: state.version.label, variant: state.variant.name, n: previewPlugins.length, tag,
     timezone: $('timezoneBox').value,
@@ -148,6 +149,11 @@ function openSubmitModal() {
     packageMirror: $('packageMirrorBox').selectedOptions[0].textContent,
     pageVersion: state.siteVersion,
   });
+  for (const [index, text] of summary.split('\n').entries()) {
+    const field = document.createElement(index === 0 ? 'strong' : 'div');
+    field.textContent = text;
+    sum.appendChild(field);
+  }
   mb.appendChild(sum);
   if (state.importedConfig && !importedTargetVerified) {
     const warning = document.createElement('p');
@@ -156,9 +162,13 @@ function openSubmitModal() {
     mb.appendChild(warning);
   }
 
+  const methods = document.createElement('div');
+  methods.className = 'method-grid';
+  mb.appendChild(methods);
   const card = (titleKey, descText, btnKey, onClick) => {
+    const primary = !methods.children.length;
     const c = document.createElement('div');
-    c.className = 'method-card';
+    c.className = 'method-card' + (primary ? ' method-primary' : '');
     const h = document.createElement('h4');
     h.textContent = t(titleKey);
     c.appendChild(h);
@@ -166,12 +176,12 @@ function openSubmitModal() {
     p.textContent = descText;
     c.appendChild(p);
     const button = document.createElement('button');
-    button.className = 'btn btn-primary';
+    button.className = primary ? 'btn btn-primary' : 'btn';
     button.type = 'button';
     button.textContent = t(btnKey);
     button.addEventListener('click', onClick);
     c.appendChild(button);
-    mb.appendChild(c);
+    methods.appendChild(c);
   };
   card('submit.m1.title', state.mode === 'self' ? t('submit.m1.descSelf') : t('submit.m1.desc'),
     'submit.m1.btn', async (event) => {

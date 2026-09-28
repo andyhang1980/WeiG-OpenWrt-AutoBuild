@@ -3935,7 +3935,9 @@ export function evaluateNormalizedCompatibilityRules(model, normalized, inputVal
       return record;
     }).filter((record) => record?.configSymbol);
     if (missingPackages.length) {
-      if (ifPresent && records.length === 0) continue;
+      // Availability is an applicability condition for the complete rule,
+      // not permission to drop an operand from an all-* conjunction.
+      if (ifPresent) continue;
       if (!ifPresent) {
         if (mismatches.length) continue;
         throw compatibilityError(`${rule.id} references a package missing from the active Catalog: ${missingPackages[0]}`);
@@ -4782,7 +4784,8 @@ export function deriveCompatibilityPlans(model, inputValues, warning, intent = {
   // an operation or bypasses a selector/protected-symbol constraint.
   const preferred = (rule.preferredDisable || []).map((name) =>
     normalized.find((candidate) => candidate.package === name)).find(Boolean);
-  return { candidates: normalized, recommended: preferred || (cheapest.length === 1 ? cheapest[0] : null) };
+  return { candidates: normalized, preferredUnavailable: Boolean(rule.preferredDisable?.length && !preferred),
+    recommended: rule.preferredDisable?.length ? preferred || null : (cheapest.length === 1 ? cheapest[0] : null) };
 }
 
 export function compatibilityAcknowledgementKey({ sha256, dataRef, sourceId, branchName, sourceCommit = '', targetKey = '', revision, ruleIds } = {}) {

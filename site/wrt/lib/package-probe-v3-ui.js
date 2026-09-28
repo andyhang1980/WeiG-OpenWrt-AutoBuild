@@ -348,7 +348,7 @@ async function openPackageProbeV3Modal() {
     const results = document.createElement('div'); results.className = 'probe-results'; picker.append(search, results);
 
     const recordIntent = (option) => {
-      const packageName = String(option?.symbol || '').replace(/^PACKAGE_/, '');
+      const packageName = catalogPackageRecordForSymbol(option?.symbol)?.package;
       if (!packageName) return;
       const before = baselineStates.get(packageName) || 'n';
       const after = probeV3MenuOptionState(option);

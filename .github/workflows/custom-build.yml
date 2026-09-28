@@ -605,11 +605,11 @@ jobs:
           {
             echo "#### Package mirror / 软件包镜像"
             echo ""
-            echo "- requested / 请求: `${{ steps.req.outputs.package_mirror_id }}`"
-            echo "- effective / 生效: `$PACKAGE_MIRROR_EFFECTIVE`"
-            echo "- package manager / 包管理器: `$PACKAGE_MANAGERS`"
-            echo "- fallback / 回退: `$PACKAGE_MIRROR_FALLBACK`"
-            echo "- report / 报告: `package-mirror-report.json` (CONFIG artifact)"
+            printf -- '- requested / 请求: `%s`\n' '${{ steps.req.outputs.package_mirror_id }}'
+            printf -- '- effective / 生效: `%s`\n' "$PACKAGE_MIRROR_EFFECTIVE"
+            printf -- '- package manager / 包管理器: `%s`\n' "$PACKAGE_MANAGERS"
+            printf -- '- fallback / 回退: `%s`\n' "$PACKAGE_MIRROR_FALLBACK"
+            printf -- '- report / 报告: `%s` (CONFIG artifact)\n' 'package-mirror-report.json'
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload final .config / 上传最终 .config(编译失败也能拿到)

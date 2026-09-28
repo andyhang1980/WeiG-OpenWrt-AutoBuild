@@ -138,6 +138,28 @@ for (const sourceId of ['Demo', 'AnotherSource']) {
   assert.equal(evaluateCompatibilityRules(directModel, preferenceDocument, moduleOnly, context).warnings.length, 0);
 }
 const noPreference = structuredClone(preferenceDocument);
+// A missing participant cannot weaken a conjunction into a single-package ban.
+for (const absent of ['target-app', 'unrelated-app']) {
+  const missing = createCatalogModel(catalogWith(directCatalog.relations.records.filter((r) => r.package !== absent)));
+  for (const [a, b] of [['y', 'y'], ['y', 'n'], ['n', 'y'], ['m', 'y'], ['n', 'n']]) {
+    const values = new Map([['PACKAGE_target-app', a], ['PACKAGE_unrelated-app', b]]);
+    assert.equal(evaluateCompatibilityRules(missing, preferenceDocument, values,
+      { sourceId: 'Demo', branchName: 'stable' }).warnings.length, 0, `missing ${absent}`);
+  }
+}
+for (const [a, b] of [['y', 'n'], ['n', 'y'], ['n', 'n'], ['m', 'y'], ['y', 'm']]) {
+  assert.equal(evaluateCompatibilityRules(directModel, preferenceDocument,
+    new Map([['PACKAGE_target-app', a], ['PACKAGE_unrelated-app', b]]),
+    { sourceId: 'Demo', branchName: 'stable' }).warnings.length, 0);
+}
+const lockedPreferenceModel = createCatalogModel(catalogWith(directCatalog.relations.records.map((row) =>
+  row.package === 'unrelated-app' ? { ...row, canDisable: false, userSettable: false } : row)));
+const lockedPreferenceWarning = evaluateCompatibilityRules(lockedPreferenceModel, preferenceDocument,
+  preferenceValues, { sourceId: 'Demo', branchName: 'stable' }).warnings[0];
+assert.equal(deriveCompatibilityPlans(lockedPreferenceModel, preferenceValues, lockedPreferenceWarning).recommended, null,
+  'an unavailable preferred plan must not silently recommend removing the other participant');
+assert.equal(deriveCompatibilityPlans(lockedPreferenceModel, preferenceValues, lockedPreferenceWarning).preferredUnavailable, true,
+  'the UI must distinguish a blocked preference from an ambiguous repair');
 delete noPreference.rules[0].preferredDisable;
 const ambiguous = evaluateCompatibilityRules(directModel, noPreference, preferenceValues,
   { sourceId: 'Demo', branchName: 'stable' }).warnings[0];

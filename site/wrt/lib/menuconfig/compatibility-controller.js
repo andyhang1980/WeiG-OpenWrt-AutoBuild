@@ -1086,6 +1086,9 @@ function openCompatibilityWarningModal(evaluation, warning, plans) {
           reason: displayText([...new Set(reasons)].join('; ')),
         });
       }
+      if (!plans.recommended && plans.preferredUnavailable) {
+        recommendationDetail.textContent = t('compatibility.preferredUnavailable');
+      }
       if (plans.recommended?.retainedDependencies?.length) {
         recommendationDetail.textContent += ` ${t('compatibility.retainedDependencies', {
           list: formatList(plans.recommended.retainedDependencies.map((symbol) =>

@@ -645,6 +645,12 @@ function applyMenuValue(option, value, force = false, source = 'user') {
 function catalogConflictRecordForPackage(name) {
   return CATALOG_MODEL?.byPackage?.get(String(name || '')) || null;
 }
+// Shared package identity for application cards, probes and size accounting.
+// PACKAGE_* also names ordinary Kconfig suboptions; a prefix is not proof.
+function catalogPackageRecordForSymbol(symbol) {
+  const record = CATALOG_MODEL?.bySymbol?.get(String(symbol || ''));
+  return record?.package && catalogConflictRecordForPackage(record.package) === record ? record : null;
+}
 function catalogConflictRows(option, requestedValue, violations) {
   const symbols = new Set([option.symbol]);
   for (const violation of violations || []) {
