@@ -68,7 +68,7 @@ assert.equal(summaryValue({ packages: 3, knownBytes: 1024, unknown: 1 }, '1 KiB'
   'mixed package selections must expose known size and unknown count');
 assert.equal(summaryValue({ packages: 0, knownBytes: 0, unknown: 0 }, '0 B'), '0 B',
   'an empty selection may remain zero');
-assert.match(pluginController, /return \{ direct: summarize\(direct\), total: summarize\(total\) \};/,
+assert.match(pluginController, /const summary = \{ direct: summarize\(direct\), total: summarize\(total\) \};/,
   'package-size aggregation must retain separate direct and total sets');
 assert.match(pluginController, /const sizes = catalogObservedPackageSizes\(\);/,
   'package-size aggregation must use the active shard only');
@@ -82,6 +82,7 @@ model.bySymbol.set('PACKAGE_app_INCLUDE_data', { configSymbol: 'PACKAGE_app_INCL
 const values = new Map([['TARGET_ARCH_PACKAGES', 'test_arch'], ['PACKAGE_app', 'y'], ['PACKAGE_lib', 'y'],
   ['PACKAGE_module', 'm'], ['PACKAGE_app_INCLUDE_data', 'y'], ['PACKAGE_archive-only', 'y']]);
 const sizeContext = { state: { device: { id: 'catalog-target' } },
+  catalogPackageSizeMaps: new WeakMap(),
   MENU_CATALOG: { source: { id: 'test', branch: 'stable', commit: 'a' } },
   CATALOG_MODEL: model, CATALOG_ENGINE: { decodeKconfigString: (s) => s.replace(/^"|"$/g, '') },
   catalogEngineValues: () => values,
@@ -108,13 +109,61 @@ values.set('TARGET_ARCH_PACKAGES', 'test_arch');
 sizeContext.catalogPackageSizesDocument.source.commit = 'b';
 assert.equal(sizeContext.packageSizeEstimate(), null, 'do not borrow another snapshot');
 sizeContext.catalogPackageSizesDocument.source.commit = 'a';
-sizeContext.catalogPackageSizesDocument.rows = [['app', 1, null]];
+sizeContext.catalogPackageSizesDocument = { ...sizeContext.catalogPackageSizesDocument, rows: [['app', 1, null]] };
 assert.equal(sizeContext.packageSizeEstimate(), null, 'hide unavailable installed-size estimates');
 for (const [percent, level] of [[49, ''], [50, 'warning'], [79, 'warning'], [80, 'danger'], [101, 'danger']]) {
-  const report = sizeContext.packageSizeCapacityStatus({ total: { knownBytes: percent * 1024 * 1024, unknown: 1 } }, 100);
-  assert.equal(report.level, level); assert.equal(report.partial, true);
+  const report = sizeContext.packageSizeCapacityStatus({ total: { knownBytes: percent * 1024 * 1024, unknown: 0 } }, 100);
+  assert.equal(report.level, level); assert.equal(report.partial, false);
 }
+assert.equal(sizeContext.packageSizeCapacityStatus({ total: { knownBytes: 90 * 1024 * 1024, unknown: 1 } }, 100), null,
+  'incomplete coverage must not produce a complete capacity percentage');
 assert.equal(sizeContext.packageSizeCapacityStatus(null, 160), null);
+
+// The selected architecture is fetched once, unavailable shards are not
+// downloaded, and a late response may never overwrite a new target's display.
+let architecture = 'arch_a';
+let finishA;
+const requests = [];
+const loaded = arch => ({ schema: 1, kind: 'package-sizes', encoding: 'positional-rows-v1',
+  fields: ['package', 'archiveBytes', 'installedBytes'], source: { id: 'test', branch: 'stable', commit: 'a' },
+  observation: { architecture: arch }, rows: [['app', 10, 60]] });
+const loaderContext = {
+  console, catalogPackageSizeMaps: new WeakMap(),
+  menuCatalogKey: 'test/stable/a', MENU_CATALOG: { source: loaded('').source, splitAssets: true },
+  CATALOG_ENGINE: { decodeKconfigString: value => value.replace(/^"|"$/g, '') },
+  catalogEngineValues: () => new Map([['TARGET_ARCH_PACKAGES', architecture]]),
+  selectedCatalogSource: () => ({}), selectedCatalogBranch: () => ({ assets: {
+    'packageSizes:arch_a': { asset: 'a.gz', architecture: 'arch_a', installedItems: 1 },
+    'packageSizes:arch_b': { asset: 'b.gz', architecture: 'arch_b', installedItems: 1 },
+    'packageSizes:empty': { asset: 'empty.gz', architecture: 'empty', installedItems: 0 },
+  } }),
+  catalogPackageSizesDocument: null, catalogPackageSizesKey: '', catalogPackageSizesPromise: null,
+  catalogPackageSizesPromiseKey: '', refreshCatalogBranchApplications: () => {},
+  catalogShardLoader: async logical => {
+    requests.push(logical);
+    return logical.endsWith('arch_a') ? new Promise(resolve => { finishA = resolve; }) : loaded('arch_b');
+  },
+};
+vm.createContext(loaderContext);
+vm.runInContext(['catalogPackageSizeMap', 'validateCatalogPackageSizes', 'ensureCatalogPackageSizes']
+  .map(name => extract(catalogSource, name)).join('\n'), loaderContext);
+const pendingA = loaderContext.ensureCatalogPackageSizes();
+const pendingAgain = loaderContext.ensureCatalogPackageSizes();
+architecture = 'arch_b';
+await loaderContext.ensureCatalogPackageSizes();
+finishA(loaded('arch_a'));
+await Promise.all([pendingA, pendingAgain]);
+assert.equal(loaderContext.catalogPackageSizesDocument.observation.architecture, 'arch_b');
+assert.deepEqual(requests, ['packageSizes:arch_a', 'packageSizes:arch_b']);
+await loaderContext.ensureCatalogPackageSizes();
+assert.equal(requests.length, 2, 'immutable shard results are reused');
+architecture = 'empty';
+await loaderContext.ensureCatalogPackageSizes();
+assert.equal(loaderContext.catalogPackageSizesDocument, null);
+assert.equal(requests.length, 2, 'zero installed-size coverage must not download a shard');
+architecture = 'unpublished';
+await loaderContext.ensureCatalogPackageSizes();
+assert.equal(requests.length, 2, 'unpublished architectures must not borrow a default shard');
 
 const sourceJson = JSON.parse(read('tools/i18n-source.json'));
 const translationJson = JSON.parse(read('tools/i18n-translations.json'));

@@ -209,6 +209,26 @@ assert.equal(autoPlans.recommended?.cost, 1,
   'automatically resolved target still counted as a second user action');
 assert.equal(autoPlans.recommended?.values.get('PACKAGE_auto-core'), 'n');
 
+// Both participants reach the same executable plan. Deduplication must retain
+// the reviewed target even when its selector sorts first by package name.
+const equivalentWarning = {
+  ...autoWarning,
+  rule: { ...autoWarning.rule, issue: 'file-ownership', match: 'all-installed',
+    packages: ['auto-selector', 'auto-core'], preferredDisable: ['auto-core'] },
+  records: ['auto-selector', 'auto-core'].map((name) => autoModel.byPackage.get(name)),
+};
+for (const records of [equivalentWarning.records, [...equivalentWarning.records].reverse()]) {
+  const plans = deriveCompatibilityPlans(autoModel, autoValues, { ...equivalentWarning, records }, {
+    dependencySymbols: new Set(['PACKAGE_auto-core']),
+  });
+  assert.equal(plans.candidates.length, 1);
+  assert.equal(plans.preferredUnavailable, false);
+  assert.equal(plans.recommended?.package, 'auto-core');
+  assert.deepEqual(new Set(plans.recommended.resolvedPackages), new Set(['auto-core', 'auto-selector']));
+  assert.deepEqual(plans.recommended.steps.map((step) => step.package), ['auto-selector']);
+  assert.equal(plans.recommended.values.get('PACKAGE_auto-core'), 'n');
+}
+
 const root = dirname(fileURLToPath(import.meta.url));
 const appCss = readFileSync(join(root, '..', 'site', 'wrt', 'app.css'), 'utf8');
 const overflowCss = readFileSync(join(root, '..', 'site', 'wrt', 'compatibility-recommendation.css'), 'utf8');

@@ -109,14 +109,14 @@ expect(html.includes('data-i18n="btn.import.short"') && html.includes('data-i18n
   app.includes('rootfs.value} MiB') && app.includes('packageSizeEstimateText(packageSizes)') &&
   app.includes('packageSizeEstimateTooltip(packageSizes)') &&
   app.includes('function packageSizeEstimate()') &&
-  app.includes('return { direct: summarize(direct), total: summarize(total) };') &&
+  app.includes('const summary = { direct: summarize(direct), total: summarize(total) };') &&
   app.includes('direct: fmtSize(summary.direct.knownBytes)') &&
   app.includes('total: fmtSize(summary.total.knownBytes)') &&
   app.includes('function validateCatalogBranchApplications(catalog)') &&
   app.includes('function catalogPackageSizeMap(document = catalogPackageSizesDocument)') &&
   app.includes('function validateCatalogPackageSizes(document, catalog = MENU_CATALOG)') &&
   app.includes('async function ensureCatalogPackageSizes()') &&
-  app.includes("loader('packageSizes')") &&
+  app.includes('loader(logical)') &&
   app.includes("kind !== 'branch-applications'") &&
   css.includes('.cap-info.rootfs-capacity::before{content:"RootFS "}') &&
   css.includes('.cap-info.rootfs-capacity::before { content: ""; }'),

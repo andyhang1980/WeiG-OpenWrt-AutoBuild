@@ -277,15 +277,16 @@ html[data-theme="light"] .import-source-field .target-select { color-scheme: lig
 .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 18px; }
 .summary-grid > strong { grid-column: 1 / -1; color: var(--content-strong); }
 .summary-grid > * { overflow-wrap: anywhere; }
-.method-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 12px; }
+.method-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .method-grid .method-card {
-  min-width: 0; margin: 0; display: flex; flex-direction: column; align-items: flex-start;
+  min-width: 0; margin: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 18px; align-items: center;
   background: var(--surface-raised); box-shadow: var(--elevation-1);
 }
-.method-grid .method-card p { flex: 1; }
-.method-grid .method-card .btn { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.method-grid .method-card h4, .method-grid .method-card p { grid-column: 1; }
+.method-grid .method-card .btn { grid-column: 2; grid-row: 1 / span 2; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .method-grid .method-primary {
-  grid-row: span 2; border-color: var(--accent);
+  border-color: var(--accent);
   background: linear-gradient(145deg, var(--accent-surface), var(--surface-raised));
 }
 .capacity-warning { color: var(--warn) !important; }
@@ -306,7 +307,7 @@ html[data-theme="light"] .import-source-field .target-select { color-scheme: lig
 .sel-row:last-child { border-bottom: none; }
 .sel-size { margin-left: auto; font-size: var(--font-badge); color: var(--text3); white-space: nowrap; }
 .sel-rm {
-  border: none; background: none; color: var(--text3);
+  border: none; background: none; color: var(--text3); margin-left: auto; flex: none;
   width: 30px; height: 30px; border-radius: 6px; font-size: 13px;
 }
 .sel-rm:hover { color: var(--danger); background: var(--card2); }

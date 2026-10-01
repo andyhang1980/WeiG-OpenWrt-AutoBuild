@@ -21,6 +21,7 @@ function setMenuValue(option, value, openChildren = false) {
   }
   const renderedValue = menuValues.get(option.symbol) ?? simpleKconfigDefault(option);
   renderCatalogUiAfterIntent(openChildren && renderedValue !== 'n', option, renderedValue);
+  scheduleCompatibilitySelectionHint();
   return true;
 }
 function initDefconfig() {

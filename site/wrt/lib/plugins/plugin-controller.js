@@ -283,9 +283,9 @@ function renderPlugin(p) {
       ? `\n${t('runtime.463daf3dbfcf')}: ${catalogOrigin.label}` : '') +
     (p.warn ? '\n' + t(p.warn) : '');
   const pkg = p.pkgs?.[state.source.id] || p.pkg || p.catalogCandidates?.[0] || p.id;
-  const size = p.sizeBytes === null ? t('runtime.7b4f86f4a586')
-    : t('drawer.size', { n: fmtSize(p.sizeBytes) });
-  const tooltipBody = displayText(detail) + '\n' + displayText(pkg) + ' · ' + size;
+  const size = Number.isSafeInteger(p.sizeBytes) && p.sizeBytes >= 0
+    ? t('drawer.size', { n: fmtSize(p.sizeBytes) }) : '';
+  const tooltipBody = displayText(detail) + '\n' + displayText(pkg) + (size ? ' · ' + size : '');
   bindUiTooltipContent(item, { title: pName(p), body: tooltipBody });
   bindUiTooltipContent(nameBtn, { title: pName(p), body: tooltipBody });
   nameBtn.removeAttribute('title');
@@ -416,11 +416,12 @@ function packageSizeEstimate() {
     }
     return { packages: names.size, knownBytes, unknown };
   };
-  return { direct: summarize(direct), total: summarize(total) };
+  const summary = { direct: summarize(direct), total: summarize(total) };
+  return summary.total.packages > 0 && summary.total.unknown === summary.total.packages ? null : summary;
 }
 function packageSizeCapacityStatus(summary, capacityMiB) {
   const bytes = summary?.total?.knownBytes;
-  if (!Number.isFinite(bytes) || !Number.isFinite(capacityMiB) || capacityMiB <= 0) return null;
+  if (!Number.isFinite(bytes) || summary.total.unknown > 0 || !Number.isFinite(capacityMiB) || capacityMiB <= 0) return null;
   const percent = bytes / (capacityMiB * 1024 * 1024) * 100;
   return { percent: Math.round(percent), level: percent >= 80 ? 'danger' : percent >= 50 ? 'warning' : '',
     partial: summary.total.unknown > 0 };
@@ -531,6 +532,7 @@ function openRootfsCapacityGuidance() {
 }
 
 function updateStats() {
+  void ensureCatalogPackageSizes();
   const sel = effectiveSelection();
   const n = sel.all.length;
   $('selCount').textContent = t('bar.selected', { n });
@@ -601,10 +603,11 @@ function openSelectedDrawer() {
       f.textContent = kind === 'force' ? t('adv.forced') : t('adv.removed');
       name.appendChild(f);
     }
-    const sz = document.createElement('span');
-    sz.className = 'sel-size';
-    sz.textContent = p.sizeBytes === null ? t('runtime.7b4f86f4a586')
-      : t('drawer.size', { n: fmtSize(p.sizeBytes) });
+    const sz = Number.isSafeInteger(p.sizeBytes) && p.sizeBytes >= 0 ? document.createElement('span') : null;
+    if (sz) {
+      sz.className = 'sel-size';
+      sz.textContent = t('drawer.size', { n: fmtSize(p.sizeBytes) });
+    }
     const rm = document.createElement('button');
     rm.type = 'button';
     rm.className = 'sel-rm';
@@ -621,7 +624,7 @@ function openSelectedDrawer() {
       row.remove();
       if (!list.children.length) closeModal();
     });
-    row.appendChild(name); row.appendChild(sz); row.appendChild(rm);
+    row.appendChild(name); if (sz) row.appendChild(sz); row.appendChild(rm);
     list.appendChild(row);
   }
   mb.appendChild(list);

@@ -631,8 +631,8 @@ function resolveCompatibilityIdentity(source, branch, loadedSource) {
   return { sourceId, branchName, sourceCommit };
 }
 
-function compatibilityContext() {
-  const catalog = catalogValidationContext(configurationPreflightValues(), 'interactive');
+function compatibilityContext(inputValues = configurationPreflightValues()) {
+  const catalog = catalogValidationContext(inputValues, 'interactive');
   const source = selectedCatalogSource();
   const branch = selectedCatalogBranch(source);
   const identity = resolveCompatibilityIdentity(source, branch, MENU_CATALOG?.source);
@@ -653,8 +653,8 @@ function compatibilityContext() {
   };
 }
 
-function evaluateLoadedCompatibility(loaded) {
-  const context = compatibilityContext();
+function evaluateLoadedCompatibility(loaded, inputValues = configurationPreflightValues()) {
+  const context = compatibilityContext(inputValues);
   const evaluation = CATALOG_ENGINE.evaluateCompatibilityRules(
     CATALOG_MODEL, loaded.compatibility, context.values, context,
   );
@@ -667,6 +667,30 @@ async function loadCompatibilityEvaluation(forceRefresh = false) {
   }
   const loaded = await CATALOG_LOADER.fetchCompatibility({ forceRefresh });
   return evaluateLoadedCompatibility(loaded);
+}
+
+let compatibilitySelectionHintTimer = null;
+let compatibilitySelectionHintKey = '';
+function scheduleCompatibilitySelectionHint() {
+  clearTimeout(compatibilitySelectionHintTimer);
+  const key = menuCatalogKey;
+  const revision = catalogStateRevision;
+  // Direct user edits only: imports stay nonmodal, and repeated renders do not
+  // rescan the graph or derive speculative repair plans.
+  compatibilitySelectionHintTimer = setTimeout(async () => {
+    if (!key || menuCatalogKey !== key || catalogStateRevision !== revision || !CATALOG_MODEL) return;
+    try {
+      const loaded = await CATALOG_LOADER.fetchCompatibility();
+      if (menuCatalogKey !== key || catalogStateRevision !== revision) return;
+      const evaluation = evaluateLoadedCompatibility(loaded, menuValues);
+      const rules = evaluation.warnings.map(warning => warning.rule.id).sort().join(', ');
+      const next = rules ? `${key}:${rules}` : '';
+      if (next && next !== compatibilitySelectionHintKey) showToast(t('st.compatibility.warn', { rules }));
+      compatibilitySelectionHintKey = next;
+    } catch (error) {
+      console.warn('[Catalog selection compatibility]', error);
+    }
+  }, 150);
 }
 
 async function runCatalogTaskQueue(names, tasks, concurrency, catalogKey = '', phase = 'idle') {

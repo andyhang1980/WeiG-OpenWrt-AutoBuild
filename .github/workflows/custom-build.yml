@@ -1,4 +1,4 @@
-name: Custom Build / 定制构建
+name: Firmware Download / 固件下载
 run-name: "${{ inputs.run_title || format('Build {0}#{1} · {2}', inputs.requester, inputs.issue_number, inputs.issue_title) }}"
 
 on:
