@@ -1,5 +1,13 @@
 # Developer Guide
 
+## Recommendation identity, official sizes and submission layout
+
+- Equivalent plans retain all `resolvedPackages` so preferred cancellation identities survive deduplication. Reuse `deriveCompatibilityPlans` / `applyUserIntent` for simulation, application and verification; no hardcoded browser package rules.
+- Direct plugin/Menuconfig edits use a 150ms debounced nonmodal hint over cached graph/current state; discard stale key/revision callbacks. Imports stay nonmodal. Test/request generation retain full preflight and recommendations.
+- Intersect official OPKG/APK architectures with native Targets and accept only matching native package versions. Independent positional gzip `packageSizes:<arch>` assets load lazily for the active architecture, with negative-coverage caching and stale-response protection. Keep legacy `packageSizes` readers; no second size database or precomputed closure.
+- Hide unknown-size labels/columns without removing selected plugins, states or cancellation. Yellow 50% / red 80% RootFS advice requires installed-byte coverage for every final-Y package, not partial observations; no new Worker gate.
+- Submission actions always occupy three full-width rows: request, import, .config download. Desktop buttons sit right of their copy; narrow screens place them below. Short screens scroll internally. Only the workflow display name changes to `Firmware Download / 固件下载`, not its filename/routing ID.
+
 ## Native build-closure domains
 
 - Reuse the shared Kconfig parser/evaluator. The request parser emits job-local `conditionContext` in the existing snapshot-bound symbol-kind receipt from the verified graph. Known bool/tristate omissions are N; unknown symbols, missing scalar values and invalid expressions remain deferred. Do not rewrite `.config` or run implicit Defconfig to satisfy the check.
@@ -165,9 +173,9 @@ Default activation includes the owning symbol's dependencies as well as the defa
 
 The shared runtime's lexer must match upstream: bool default `m` remains a typed source value, comments are stripped only outside quotes, and `@` outside quotes produces an ignored-character warning while ordinary AST symbols after it remain intact. Only a complete active-source proof with no unresolved dynamic preprocessing may classify a name as native undefined; an intentionally Target-filtered definition is external only with proven projection provenance, while an unproved omission remains unresolved. Unevaluated dynamic expressions keep relations incomplete. Choice `reset if` is preserved as typed data, but native mconf/nconf clears the global `S_DEF_USER` layer only during an interactive transition from a non-Y choice member to Y. Static import, Worker reconstruction, and unsupported browser reset interactions must report explicit `unsupported`/`deferred` status rather than claim that the global reset is implemented.
 
-## 5. Compatibility schema 2/3/4/5
+## 5. Compatibility schema 2–6
 
-Schemas 2–5 are accepted. Schema 2 retains the legacy rule shape; schema 3 may add `sourceCommits`, `targetScope`, and structured `failure`; schema 4 may add rule-level `buildDependency` and requires exact `sourceCommits`. Schema 5 also permits `policy: "preventive"`: `environments` independently defines wildcard applicability, `packageAvailability: "if-present"` makes an environment without the failed target not applicable, and `evidence` contains only the exact Source, Branch, commit, and references where the failure was observed. A schema-4 package build-dependency rule activates only when the exact Catalog graph proves a path from an active package root to the failed package; legacy `triggerPackages` is accepted for reading old documents but does not supply new graph triggers. The shared Kconfig executor derives the minimum ordered steps that clear every currently active participant; absent participants neither fail validation nor enter the plan. Ordinary rules still support a named or standalone-wildcard Source and exact or glob Branch. The browser preserves the loaded schema and validates the index contract's schema, SHA-256, compressed bytes, JSON bytes, and rule count.
+Schemas 2–6 are accepted; schema 6 adds the optional `preferredDisable` preference. Schema 2 retains the legacy rule shape; schema 3 adds exact source/Target scope and structured failure; schema 4 adds rule-level `buildDependency` with exact source commits. Schema 5 separates reviewed wildcard preventive applicability from exact observed evidence. Missing required participants make the entire `if-present` rule inapplicable. The shared graph proves active roots reaching the failed build package; legacy `triggerPackages` is readable but never drives new warnings/actions. The planner produces minimal legal ordered steps, respecting preferences and preserving resolved identities during equivalent-plan deduplication. The browser validates the loaded schema, hashes, compressed/JSON bytes and rule count.
 
 The executor stays:
 
@@ -185,7 +193,7 @@ For schema-4 build-dependency rules, reverse Catalog indexes are candidate disco
 
 The modal renders generic text by `issue`. Applying a recommendation keeps it open; a relevant state change restores the action; force-continue requires a second confirmation view. No rule ID, package name, or conflict path belongs in `app.js`.
 
-Compatibility evaluation is on demand: only clicking the bottom-right **Test** control or actually generating/downloading a schema-6 `build-request.json` evaluates the final Source/Branch/Target/Kconfig state and shows recommendations. Page load, `.config`/JSON import, Source/Branch/Target changes, plugin changes, and Menuconfig edits must not evaluate the current selection or open a modal. The existing low-priority queue may prefetch the immutable compatibility asset, but prefetch is not evaluation.
+Full compatibility preflight and recommendations are on demand: **Test** and schema-6 request generation/download evaluate the final configuration. Page load, import and Source/Branch/Target changes do not open repair modals. Direct plugin/Menuconfig edits may show the debounced nonmodal hint described above, without deriving repair plans. Idle asset prefetch is not evaluation.
 
 ## 6. Request and backend
 

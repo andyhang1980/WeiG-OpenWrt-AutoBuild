@@ -1,5 +1,13 @@
 # 开发者指南
 
+## 推荐身份、官方大小观测与提交布局
+
+- 等价兼容性候选去重保留全部 `resolvedPackages`，避免首选取消身份丢失；共享 `deriveCompatibilityPlans` / `applyUserIntent` 模拟、应用、复验所有动作，不硬编码包名。
+- 直接修改插件/Menuconfig 使用 150ms debounce 非弹窗提示，复用当前状态和缓存图，丢弃过期 key/revision 回调。导入不触发提示，检和请求生成保留完整预检/推荐流程。
+- 官方 OPKG/APK 架构与 native Target 取交集，观测仅接受相同 native 包版本。`packageSizes:<arch>` 使用独立 positional gzip，浏览器只按需加载当前架构，缓存缺少覆盖的结果，丢弃旧目标响应；保留旧 `packageSizes` 读取，不维护第二套容量数据库或预计算闭包。
+- 隐藏未知大小列/标签，保留已选插件清单、状态与取消操作。最终 Y 包安装大小全部已知才提供 50% 黄 / 80% 红容量建议；不增加 Worker 门禁。
+- 提交动作始终三行：生成请求、导入配置、下载 .config；桌面说明左按钮右，窄屏按钮在下，短屏正文滚动。工作流显示名为 `Firmware Download / 固件下载`，文件/路由 ID 不变。
+
 ## 快照输入与实际序列化配置边界
 
 - `tools/parse-request.mjs` 从可信不可变 Catalog index 读取 `buildInputs`，不信任客户端
@@ -145,7 +153,7 @@ schema 4 compact relations 会在 compact 编解码 round-trip 中保留 typed d
 
 共享 runtime 的 lexer 必须与上游一致：bool default `m` 保留为 typed source value，注释只在引号外删除，引号外的 `@` 只产生 ignored-character warning 并继续构建普通 AST，`@` 后的 symbols 不能丢失。没有未求值动态预处理的完整 active-source proof 才能把名称分类为 native undefined；明确经 `parsed-target-filter` 证明的定义才是 external，未证明 omission 保持 unresolved，动态表达式未求值时 relations 必须保持 incomplete。Choice `reset if` 只在原生 mconf/nconf 把非 Y choice member 交互切换为 Y 时清除全局 `S_DEF_USER`；静态导入、Worker 重建和网页不支持的 reset 交互必须明确为 `unsupported`/`deferred`，不能宣称全局 reset 已实现。
 
-## 5. compatibility schema 2/3/4/5
+## 5. compatibility schema 2–6
 
 规则文档接受 schema 2–6。schema 2 保留旧规则形状；schema 3 可增加 `sourceCommits`、`targetScope` 和结构化 `failure`；schema 4 可增加规则级 `buildDependency`，并要求精确 `sourceCommits`。schema 5 还允许 `policy: "preventive"`：`environments` 独立定义通配适用范围，`packageAvailability: "if-present"` 使缺少失败目标的环境直接不适用，`evidence` 则只保存真实观察到故障的精确 Source、Branch、提交和引用。schema 4 的软件包构建依赖规则只有在精确 Catalog 图证明“活动软件包根 → 失败包”的路径时才命中；旧 `triggerPackages` 只为读取旧文档保留，不提供新的图触发入口。共享 Kconfig 执行器会生成解除全部当前活动参与者的最少有序步骤，缺失参与者既不报错也不进入方案。普通规则的 Source 可为具体 ID 或单独的 `*`，Branch 可为精确名或 glob。浏览器必须保留实际 schema，并校验 index 合同的 schema、SHA-256、压缩字节数、JSON 字节数和规则数。
 
@@ -161,7 +169,7 @@ schema 4 的 build-dependency 建议中，Catalog 反向索引只负责找候选
 
 页面文案按 `issue` 通用渲染。推荐按钮应用后弹窗保留；相关值再次变化时按钮恢复为“推荐方案”；强制继续必须进入第二确认视图。`app.js` 内不得出现规则 ID、插件名或冲突文件路径。
 
-兼容性检查按需执行：只有用户单击右下角“检”或真正生成/下载 schema 6 `build-request.json` 时，才针对当时的最终 Source/Branch/Target/Kconfig 运行评估并显示推荐。页面加载、导入 `.config`/JSON、切换 Source/Branch/Target、增删插件和修改 Menuconfig 都不得执行当前选择的兼容性检查或弹窗；兼容性资产可以按既有低优先级队列预取，但预取不等于评估。
+完整兼容性预检/推荐按需执行：单击“检”或生成/下载 schema 6 请求时检查最终配置。页面加载、导入和 Source/Branch/Target 切换不弹修复窗口；直接增删插件或修改 Menuconfig 可以显示上述 debounce 非弹窗提示，不生成修复计划。资产预取不等于评估。
 
 ## 6. 构建请求和后端
 
