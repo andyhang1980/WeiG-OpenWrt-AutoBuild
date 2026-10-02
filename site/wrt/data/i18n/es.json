@@ -212,6 +212,7 @@
   "risk.tail": "Si no estás seguro de alguna respuesta, detente ahora.",
   "risk.disclaimer": "El firmware lo aporta la comunidad. Lo instalas bajo tu propia responsabilidad.",
   "btn.import": "Cargar configuración",
+  "submit.rootfs": "RootFS: {size} MiB",
   "submit.confirm": "Confirma antes de enviar\nMarca: {brand}\nModelo: {device}\nFuente: {source}\nVersión: {version}\nPartición: {variant}\nComplementos: {n}\nZona horaria: {timezone}\nTema del firmware: {theme}\nNTP: {ntp}\nEspejo de paquetes: {packageMirror}\nEtiqueta: {tag}\nVersión web: {pageVersion}",
   "footer.thanksLabel": "Agradecimientos:",
   "footer.pluginAuthors": "todos los autores de complementos",

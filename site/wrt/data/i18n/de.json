@@ -212,6 +212,7 @@
   "risk.tail": "Wenn eine Antwort unklar ist, hören Sie jetzt auf.",
   "risk.disclaimer": "Die Firmware stammt aus der Community. Das Flashen erfolgt auf eigenes Risiko.",
   "btn.import": "Konfiguration laden",
+  "submit.rootfs": "RootFS: {size} MiB",
   "submit.confirm": "Vor dem Absenden prüfen\nMarke: {brand}\nModell: {device}\nQuelle: {source}\nVersion: {version}\nPartition: {variant}\nPlugins: {n}\nZeitzone: {timezone}\nFirmware-Theme: {theme}\nNTP: {ntp}\nPaketspiegel: {packageMirror}\nBuild-Kennung: {tag}\nSeitenversion: {pageVersion}",
   "footer.thanksLabel": "Danksagung:",
   "footer.pluginAuthors": "alle Plugin-Autoren",

@@ -212,6 +212,7 @@
   "risk.tail": "Если хотя бы один ответ неясен, остановитесь и не рискуйте.",
   "risk.disclaimer": "Прошивку предоставляет сообщество. Все риски при установке несёте вы.",
   "btn.import": "Загрузить конфиг",
+  "submit.rootfs": "RootFS: {size} MiB",
   "submit.confirm": "Проверьте перед отправкой\nБренд: {brand}\nМодель: {device}\nИсходники: {source}\nВерсия: {version}\nРаздел: {variant}\nПлагины: {n}\nЧасовой пояс: {timezone}\nТема прошивки: {theme}\nNTP: {ntp}\nЗеркало пакетов: {packageMirror}\nМетка сборки: {tag}\nВерсия страницы: {pageVersion}",
   "footer.thanksLabel": "Благодарности:",
   "footer.pluginAuthors": "всем авторам плагинов",

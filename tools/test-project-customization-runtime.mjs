@@ -12,6 +12,11 @@ const html = readFileSync(join(ROOT, 'site', 'wrt', 'index.html'), 'utf8');
 const parser = readFileSync(join(ROOT, 'tools', 'parse-request.mjs'), 'utf8');
 const admission = readFileSync(join(ROOT, 'tools', 'build-admission.mjs'), 'utf8');
 const workflow = readFileSync(join(ROOT, '.github', 'workflows', 'custom-build.yml'), 'utf8');
+const i18n = readFileSync(join(ROOT, 'site', 'wrt', 'lib', 'i18n', 'i18n.js'), 'utf8');
+assert.match(i18n, /mkA\(PROJECT\.links\.guide, t\('mode\.self\.tutorial'\)\)/,
+  'the Fork guide destination must use the validated site projection');
+assert.doesNotMatch(i18n, /#fork-自建|targetRepoBase/,
+  'the localization renderer must not retain dead repository helpers or duplicate guide fallback policy');
 
 const siteConfigLoader = dataLoader.match(/async function loadSiteConfig\(\) \{[\s\S]*?\n\}/)?.[0] || '';
 assert.match(siteConfigLoader, /fetch\(releaseAssetUrl\('config\/site\.json'\)/,

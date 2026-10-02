@@ -10,6 +10,7 @@ import {
   kconfigStateConstraints,
   parseConfigDocument,
 } from '../site/wrt/lib/catalog-engine.js';
+import { serializeConfigMap } from '../site/wrt/lib/profile-baseline.js';
 
 function catalogWith(records, reverseKconfig = {}) {
   return {
@@ -230,6 +231,62 @@ for (const records of [equivalentWarning.records, [...equivalentWarning.records]
 }
 
 const root = dirname(fileURLToPath(import.meta.url));
+// A reviewed environment policy is independent of evidence commits. All
+// cancellation roots and automatic dependencies still come from the graph.
+const policyCatalog = catalogWith([
+  { kind: 'symbol', configSymbol: 'KERNEL_NEW', kconfigSymbol: 'KERNEL_NEW', type: 'bool', states: ['n', 'y'] },
+  { kind: 'package', package: 'failed-module', configSymbol: 'PACKAGE_failed-module',
+    kconfigSymbol: 'PACKAGE_failed-module', states: ['n', 'y'] },
+  { kind: 'package', package: 'service-core', configSymbol: 'PACKAGE_service-core',
+    kconfigSymbol: 'PACKAGE_service-core', states: ['n', 'y'],
+    packageInfo: { depends: [{ raw: '+failed-module', required: true, packages: ['failed-module'] }] },
+    kconfig: { selectsExpressions: [['PACKAGE_failed-module']] } },
+  { kind: 'package', package: 'service-ui', configSymbol: 'PACKAGE_service-ui',
+    kconfigSymbol: 'PACKAGE_service-ui', states: ['n', 'y'],
+    packageInfo: { depends: [{ raw: '+service-core', required: true, packages: ['service-core'] }] },
+    kconfig: { selectsExpressions: [['PACKAGE_service-core']] } },
+  { kind: 'package', package: 'unrelated-ui', configSymbol: 'PACKAGE_unrelated-ui',
+    kconfigSymbol: 'PACKAGE_unrelated-ui', states: ['n', 'y'] },
+]);
+policyCatalog.relations.packageClosureComplete = true;
+policyCatalog.relations.packageClosureCapabilities = ['complete-package-build-closure-v1'];
+const policyModel = createCatalogModel(policyCatalog);
+const policyRule = { schema: 6, rules: [{ id: 'BLD-POLICY', issue: 'build-failure', match: 'all-selected',
+  policy: 'preventive', if: 'KERNEL_NEW',
+  environments: [{ source: 'Demo', branch: 'stable', packageAvailability: 'if-present',
+    targetScope: { system: ['test'], subtarget: ['64'] } }],
+  evidence: [{ source: 'Demo', branch: 'stable', sourceCommit: 'a'.repeat(40), refs: ['test:evidence'] }],
+  packages: ['failed-module'], buildDependency: { package: 'failed-module' },
+  failure: { phase: 'package-compile', cause: 'package-caused', code: 'fixture-api-missing' },
+}] };
+const policyValues = parseConfigDocument('CONFIG_KERNEL_NEW=y\nCONFIG_PACKAGE_service-ui=y\n' +
+  'CONFIG_PACKAGE_service-core=y\nCONFIG_PACKAGE_failed-module=y\nCONFIG_PACKAGE_unrelated-ui=y\n');
+const policyContext = { sourceId: 'Demo', branchName: 'stable', sourceCommit: 'b'.repeat(40),
+  targetSystem: 'test', targetSubtarget: '64' };
+const policyWarning = evaluateCompatibilityRules(policyModel, policyRule, policyValues, policyContext).warnings[0];
+assert.ok(policyWarning, 'an evidence commit must not restrict the reviewed preventive environment');
+const policyPlan = deriveCompatibilityPlans(policyModel, policyValues, policyWarning, {
+  dependencySymbols: new Set(['PACKAGE_service-core', 'PACKAGE_failed-module']),
+});
+assert.ok(policyPlan.recommended, 'the graph must yield a legal cancellation recommendation');
+assert.ok(policyPlan.recommended.steps.some(row => row.package === 'service-ui'));
+assert.equal(policyPlan.recommended.values.get('PACKAGE_failed-module'), 'n');
+assert.equal(policyPlan.recommended.values.get('PACKAGE_unrelated-ui'), 'y');
+const roundtrip = parseConfigDocument(serializeConfigMap(policyPlan.recommended.values));
+assert.equal(evaluateCompatibilityRules(policyModel, policyRule, roundtrip, policyContext).warnings.length, 0,
+  'export/import and a second check must not resurrect a resolved failure');
+for (const context of [{ ...policyContext, sourceId: 'Other' }, { ...policyContext, branchName: 'next' },
+  { ...policyContext, targetSubtarget: '32' }]) {
+  assert.equal(evaluateCompatibilityRules(policyModel, policyRule, policyValues, context).warnings.length, 0);
+}
+const oldKernelValues = new Map(policyValues);
+oldKernelValues.set('KERNEL_NEW', 'n');
+assert.equal(evaluateCompatibilityRules(policyModel, policyRule, oldKernelValues, policyContext).warnings.length, 0);
+const missingFailed = structuredClone(policyCatalog);
+missingFailed.relations.records = missingFailed.relations.records.filter(row => row.package !== 'failed-module');
+assert.equal(evaluateCompatibilityRules(createCatalogModel(missingFailed), policyRule, policyValues,
+  policyContext).warnings.length, 0, 'if-present policy must not invent a missing failed package');
+
 const appCss = readFileSync(join(root, '..', 'site', 'wrt', 'app.css'), 'utf8');
 const overflowCss = readFileSync(join(root, '..', 'site', 'wrt', 'compatibility-recommendation.css'), 'utf8');
 const overflowUi = readFileSync(join(root, '..', 'site', 'wrt', 'lib', 'compatibility-recommendation-ui.js'), 'utf8');

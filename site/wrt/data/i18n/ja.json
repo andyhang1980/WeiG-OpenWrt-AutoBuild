@@ -212,6 +212,7 @@
   "risk.tail": "1つでも不明なら、ここで作業を止めてください。",
   "risk.disclaimer": "ファームウェアはコミュニティ提供です。書き込みは自己責任です。",
   "btn.import": "設定を読み込む",
+  "submit.rootfs": "RootFS: {size} MiB",
   "submit.confirm": "送信前に確認してください\nブランド: {brand}\n機種: {device}\nソース: {source}\nバージョン: {version}\nパーティション: {variant}\nプラグイン: {n}\nタイムゾーン: {timezone}\nファームウェアテーマ: {theme}\nNTP: {ntp}\nパッケージミラー: {packageMirror}\nビルド識別子: {tag}\nページ版: {pageVersion}",
   "footer.thanksLabel": "謝辞:",
   "footer.pluginAuthors": "すべてのプラグイン作者",

@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SITE_ROOT = join(ROOT, 'site', 'wrt');
+const SITE_CONFIG = JSON.parse(readFileSync(join(SITE_ROOT, 'config', 'site.json'), 'utf8'));
 const REQUIRED_IDS = Object.freeze([
   'sideDock', 'dockToggle', 'langSel', 'selfTestBtn', 'densityBtn', 'themeBtn',
   'fontPanel', 'fontDec', 'fontInput', 'fontInc', 'fontReset',
@@ -980,6 +981,12 @@ async function main() {
     // Font panel: use the public Aa controls and exercise its maximum value.
     await click('#densityBtn');
     await waitVisible('#fontPanel', context);
+    await waitFor('font panel animation and actionbar geometry settled', async () => {
+      const panel = await getElement(browser, '#fontPanel');
+      const bar = await getElement(browser, '#actionbar');
+      return isVisible(panel) && Number(panel.opacity) >= 0.999 &&
+        panel.rect.bottom <= bar.rect.top + 1;
+    }, 3_000, 80);
     await assertInside('#fontPanel', context, { actionbarSafe: true });
     await evaluateFunction(browser, `() => {
       const input = document.getElementById('fontInput');
@@ -992,6 +999,12 @@ async function main() {
       return Number(value) === 24 ? value : null;
     }, 3_000, 40);
     expect(Number(fontValue) === 24, context, 'Aa maximum value was not applied', { value: fontValue });
+    await waitFor('Aa resize and actionbar geometry settled', async () => {
+      const panel = await getElement(browser, '#fontPanel');
+      const bar = await getElement(browser, '#actionbar');
+      return isVisible(panel) && Number(panel.opacity) >= 0.999 &&
+        panel.rect.bottom <= bar.rect.top + 1;
+    }, 3_000, 80);
     await assertInside('#fontPanel', context, { actionbarSafe: true });
     await click('#fontReset');
     await resetFloatingState();
@@ -1038,6 +1051,32 @@ async function main() {
       return called;
     }`);
     expect(importClicked === true, context, 'Load config entry did not invoke file input');
+
+    const forkGuide = await evaluateFunction(browser, `() => {
+      const links = [...document.querySelectorAll('#selfHint a')];
+      return links.map(link => ({ href: link.href, target: link.target, rel: link.rel }));
+    }`);
+    expect(forkGuide?.length === 2 && forkGuide[0]?.href ===
+      'https://github.com/' + SITE_CONFIG.project.repository + '/fork' &&
+      forkGuide[1]?.href === SITE_CONFIG.project.guideUrl &&
+      forkGuide.every(link => link.target === '_blank' && link.rel.includes('noopener')),
+    context, 'Fork hint destinations or safe link attributes regressed', forkGuide);
+
+    // Open only the confirmation surface: never click a request/download action.
+    await click('#submitBtn');
+    const confirmation = await evaluateFunction(browser, `() => {
+      const rootfs = rootfsPartitionInfo();
+      const field = document.querySelector('#modalBody [data-rootfs-size]');
+      return {
+        open: !document.getElementById('modal').hidden,
+        expected: rootfs ? String(rootfs.value) : null,
+        actual: field?.dataset.rootfsSize ?? null,
+        methods: document.querySelectorAll('#modalBody .method-card').length,
+      };
+    }`);
+    expect(confirmation?.open && confirmation.methods === 3 && confirmation.actual === confirmation.expected,
+      context, 'submit confirmation must show the actual RootFS value with three methods', confirmation);
+    await click('#modalClose');
 
     // The advanced menuconfig entry may be unavailable only if Catalog data
     // failed to load.  That is a real UI failure, so report it with geometry.

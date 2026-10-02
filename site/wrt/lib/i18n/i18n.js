@@ -162,7 +162,6 @@ function applyI18n() {
   hint.textContent = '';
   const parts = t('mode.self.hint').split(t('mode.self.fork'));
   const mkA = (href, text) => { const a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = text; return a; };
-  const repo = targetRepoBase();
   if (parts.length === 2) {
     hint.appendChild(document.createTextNode(parts[0]));
     hint.appendChild(mkA('https://github.com/' + OFFICIAL_REPO + '/fork', t('mode.self.fork')));
@@ -170,7 +169,7 @@ function applyI18n() {
   } else {
     hint.appendChild(document.createTextNode(t('mode.self.hint') + ' '));
   }
-  hint.appendChild(mkA('https://github.com/' + OFFICIAL_REPO + '#fork-自建', t('mode.self.tutorial')));
+  if (PROJECT?.links?.guide) hint.appendChild(mkA(PROJECT.links.guide, t('mode.self.tutorial')));
   PAGE_SHELL_CONTROLLER?.refreshThemeControl();
   if (PLUGINS) {
     renderDevices();
@@ -185,7 +184,6 @@ function applyI18n() {
   updateDeviceSummary();
   renderFirmwareSettings();
 }
-function targetRepoBase() { return OFFICIAL_REPO; }
 
 /* ============ 中文敏感词处理,仅中文界面生效,其他语言不改 / Sensitive-word masking, applied to the Chinese UI only ============ */
 /* 中文敏感词直接替换为隐晦说法 / Chinese sensitive terms are replaced with euphemisms */

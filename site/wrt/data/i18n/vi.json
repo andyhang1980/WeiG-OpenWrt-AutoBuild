@@ -212,6 +212,7 @@
   "risk.tail": "Nếu chưa chắc bất kỳ câu nào, hãy dừng lại ngay.",
   "risk.disclaimer": "Firmware do cộng đồng cung cấp. Bạn tự chịu rủi ro khi nạp.",
   "btn.import": "Nạp cấu hình",
+  "submit.rootfs": "RootFS: {size} MiB",
   "submit.confirm": "Xác nhận trước khi gửi\nHãng: {brand}\nMẫu: {device}\nNguồn: {source}\nPhiên bản: {version}\nPhân vùng: {variant}\nPlugin: {n}\nMúi giờ: {timezone}\nGiao diện firmware: {theme}\nNTP: {ntp}\nMáy chủ gương gói: {packageMirror}\nNhãn bản dựng: {tag}\nPhiên bản trang: {pageVersion}",
   "footer.thanksLabel": "Cảm ơn:",
   "footer.pluginAuthors": "tất cả tác giả plugin",

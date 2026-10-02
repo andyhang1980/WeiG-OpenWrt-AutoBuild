@@ -42,6 +42,13 @@
         "repository": {
           "$ref": "#/$defs/repository"
         },
+        "guideUrl": {
+          "description": "Optional Fork guide URL; omitted or empty values retain the repository guide fallback.",
+          "anyOf": [
+            { "const": "" },
+            { "type": "string", "pattern": "^https://[^\\s/?#]+(?:/[^\\s?#]*)?(?:\\?[^\\s#]*)?(?:#\\S*)?$" }
+          ]
+        },
         "blogUrl": {
           "anyOf": [
             {

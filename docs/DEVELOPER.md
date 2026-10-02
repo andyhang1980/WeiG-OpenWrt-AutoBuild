@@ -63,7 +63,8 @@ node tools/dev-assistant.mjs prepare
 
 `prepare` 会验证两份配置，并更新构建脚本使用的 `Shell/build-defaults.conf`。生成文件不能作为配置源直接修改；`config/build.json` 永远不随静态网页部署。字段职责固定如下：
 
-- `site/wrt/config/site.json` 的 `project.displayName` 与 `project.shortName` 只用于页面标题、短品牌和通知等展示文案；`project.repository` 与 `project.blogUrl` 只提供经校验的链接目标，不会参与网关身份、`[build]` 请求标记或 Run/Artifact 标题协议。
+- `site/wrt/config/site.json` 的 `project.displayName` 与 `project.shortName` 只用于页面标题、短品牌和通知等展示文案；`project.repository`、`project.blogUrl` 与可选 `project.guideUrl` 只提供经校验的链接目标，不会参与网关身份、`[build]` 请求标记或 Run/Artifact 标题协议。`guideUrl` 用于 Fork 提示的详细教程；省略或为空时回退本仓库的 Fork 章节，旧配置继续有效。
+- 提交确认中的 RootFS 容量复用 `rootfsPartitionInfo()` 读取当前有效 Kconfig 值；选项不可用时不猜测、不显示容量。此摘要只展示，不改变配置或增加构建门禁。
 - `site/wrt/config/site.json` 的 `catalog.repository`、`catalog.releaseTag`、`catalog.selection` 和现有 `catalog.loading` contract 只控制 Catalog 地址、首选项与加载调度。Source、Branch、Target/Profile、插件、Kconfig 和兼容性事实必须继续从 Catalog 数据读取；这里不能维护清单或高级 Catalog 事实。
 - `site/wrt/config/site.json` 的 `ui`、`firmware`、`build.defaultTag` 分别提供网页外观、公开固件默认值和网页默认构建标识；它们不扩大请求协议或事实权威边界。
 - `config/build.json` 只提供 `password.mode`、`jobs.compile`、`jobs.download` 与 `admission.publicActiveBuilds`。这些值仅供构建端读取，浏览器不能读取。

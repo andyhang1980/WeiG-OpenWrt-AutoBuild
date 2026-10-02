@@ -212,6 +212,7 @@
   "risk.tail": "하나라도 확실하지 않다면 지금 멈추세요.",
   "risk.disclaimer": "펌웨어는 커뮤니티가 제공합니다. 플래싱 위험은 사용자 책임입니다.",
   "btn.import": "설정 불러오기",
+  "submit.rootfs": "RootFS: {size} MiB",
   "submit.confirm": "제출 전에 확인하세요\n브랜드: {brand}\n모델: {device}\n소스: {source}\n버전: {version}\n파티션: {variant}\n플러그인: {n}\n시간대: {timezone}\n펌웨어 테마: {theme}\nNTP: {ntp}\n패키지 미러: {packageMirror}\n빌드 식별자: {tag}\n페이지 버전: {pageVersion}",
   "footer.thanksLabel": "감사:",
   "footer.pluginAuthors": "모든 플러그인 작성자",

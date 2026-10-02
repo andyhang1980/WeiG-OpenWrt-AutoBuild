@@ -46,4 +46,21 @@ assert.match(components, /export function createUiActionRow/);
 assert.match(components, /export function createUiButton/);
 assert.match(components, /export function createUiCheckboxControl/);
 assert.match(app, /payload\.customTarget = schema6TargetIdentity\(\);/);
+const buildController = readFileSync(new URL('../site/wrt/lib/build/build-controller.js', import.meta.url), 'utf8');
+const rootfsSummary = buildController.match(/  const rootfs = rootfsPartitionInfo\(\);\n[\s\S]*?(?=  mb\.appendChild\(sum\);)/)?.[0];
+assert.ok(rootfsSummary, 'submit confirmation must consume the effective RootFS helper');
+for (const value of [160, 512, 1024, null]) {
+  const nodes = [];
+  Function('rootfsPartitionInfo', 'document', 't', 'sum', rootfsSummary)(
+    () => value === null ? null : { value },
+    { createElement: () => ({ dataset: {} }) },
+    (key, parameters) => `${key}:${parameters.size}`,
+    { appendChild: node => nodes.push(node) },
+  );
+  assert.equal(nodes.length, value === null ? 0 : 1, 'unavailable RootFS must not produce a guessed size');
+  if (value !== null) {
+    assert.equal(nodes[0].dataset.rootfsSize, String(value));
+    assert.equal(nodes[0].textContent, `submit.rootfs:${value}`);
+  }
+}
 console.log('shared UI module contracts passed');

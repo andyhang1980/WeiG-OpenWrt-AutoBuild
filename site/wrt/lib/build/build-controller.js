@@ -154,6 +154,13 @@ function openSubmitModal() {
     field.textContent = text;
     sum.appendChild(field);
   }
+  const rootfs = rootfsPartitionInfo();
+  if (rootfs) {
+    const field = document.createElement('div');
+    field.dataset.rootfsSize = String(rootfs.value);
+    field.textContent = t('submit.rootfs', { size: rootfs.value });
+    sum.appendChild(field);
+  }
   mb.appendChild(sum);
   if (state.importedConfig && !importedTargetVerified) {
     const warning = document.createElement('p');

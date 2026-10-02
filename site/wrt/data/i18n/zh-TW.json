@@ -212,6 +212,7 @@
   "risk.tail": "任何一個不確定,請先放下手，今晚不用跪鍵盤。",
   "risk.disclaimer": "韌體由社群愛好者提供,刷壞自理，風險自負。",
   "btn.import": "載入設定",
+  "submit.rootfs": "RootFS: {size} MiB",
   "submit.confirm": "請確認後再送出\n品牌:{brand}\n型號:{device}\n原始碼:{source}\n版本:{version}\n分割區:{variant}\n套件:{n} 個\n時區:{timezone}\n韌體主題:{theme}\nNTP:{ntp}\n軟體套件鏡像:{packageMirror}\n建置標識:{tag}\n網頁版本:{pageVersion}",
   "footer.thanksLabel": "【鳴謝】",
   "footer.pluginAuthors": "全部套件作者",

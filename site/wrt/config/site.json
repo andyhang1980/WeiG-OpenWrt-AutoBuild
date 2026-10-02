@@ -3,7 +3,8 @@
     "displayName": "WeiG-OpenWrt-AutoBuild",
     "shortName": "Wei.G",
     "repository": "weigefenxiang/WeiG-OpenWrt-AutoBuild",
-    "blogUrl": "https://www.weigshare.com/"
+    "blogUrl": "https://www.weigshare.com/",
+    "guideUrl": "https://weigshare.com/posts/WeiG-OpenWrt-AutoBuild-Guide/"
   },
   "catalog": {
     "repository": "weigefenxiang/WeiG-OpenWrt-Menuconfig-Catalog",

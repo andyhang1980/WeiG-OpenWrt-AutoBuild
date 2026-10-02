@@ -83,6 +83,26 @@ try {
   assert.equal(run(undefined, '$(curdir)/root/compile += $(curdir)/missing/compile\n').result.result, 'inconclusive', 'unknown native source identities are not dropped');
   assert.equal(run('CONFIG_PACKAGE_unknown=y\n').result.result, 'inconclusive');
   const fixture = run();
+  const activeFixture = run('CONFIG_PACKAGE_failed=y\nCONFIG_KERNEL_NEW=y\n');
+  const preventive = structuredClone(document);
+  preventive.rules[0].if = 'KERNEL_NEW';
+  preventive.rules[0].environments = [{ source: identity.source, branch: identity.branch,
+    packageAvailability: 'if-present', targetScope: { system: ['x86'], subtarget: ['64'] } }];
+  const checkPolicy = (overrides = {}) => verifyBuildClosure({ document: preventive,
+    identity: { ...identity, sourceCommit: 'f'.repeat(40), ...overrides }, graph: activeFixture.graph,
+    active: activeFixture.parsed.active, configValues: activeFixture.parsed.values });
+  assert.equal(checkPolicy().result, 'fail', 'a source commit change must not bypass a reviewed environment policy');
+  assert.equal(checkPolicy({ source: 'Other' }).result, 'pass');
+  assert.equal(checkPolicy({ branch: 'stable' }).result, 'pass');
+  assert.equal(checkPolicy({ target: { ...identity.target, subtarget: '32' } }).result, 'pass');
+  const oldKernel = new Map(activeFixture.parsed.values);
+  oldKernel.set('KERNEL_NEW', 'n');
+  assert.equal(verifyBuildClosure({ document: preventive, identity, graph: activeFixture.graph,
+    active: activeFixture.parsed.active, configValues: oldKernel }).result, 'pass');
+  assert.equal(verifyBuildClosure({ document: preventive, identity,
+    graph: { ...activeFixture.graph, packages: new Map() }, active: new Map(),
+    configValues: activeFixture.parsed.values }).result, 'pass', 'if-present policy skips absent failure targets');
+  run();
   const checkDocument = (rules) => verifyBuildClosure({ document: rules, identity, graph: fixture.graph,
     active: fixture.parsed.active, configValues: fixture.parsed.values });
   const outOfScope = structuredClone(document);

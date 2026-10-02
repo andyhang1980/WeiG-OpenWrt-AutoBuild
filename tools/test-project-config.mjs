@@ -80,6 +80,16 @@ assert.equal(runtimeSite.links.repository, 'https://github.com/weigefenxiang/Wei
 assert.equal(runtimeSite.links.actions, 'https://github.com/weigefenxiang/WeiG-OpenWrt-AutoBuild/actions');
 assert.equal(runtimeSite.links.catalog, 'https://github.com/weigefenxiang/WeiG-OpenWrt-Menuconfig-Catalog');
 assert.equal(runtimeSite.links.blog, sourceSite.project.blogUrl);
+assert.equal(runtimeSite.links.guide, sourceSite.project.guideUrl);
+const legacySite = clone(sourceSite);
+delete legacySite.project.guideUrl;
+assert.equal(isValidSiteConfig(legacySite), true, 'the additive guide URL must not invalidate old site configs');
+assert.equal(siteRuntimeConfig(legacySite).links.guide,
+  `${runtimeSite.links.repository}#fork-自建`, 'old site configs retain their repository guide');
+assert.equal(siteRuntimeConfig(mutate(sourceSite, ['project', 'guideUrl'], '')).links.guide,
+  `${runtimeSite.links.repository}#fork-自建`, 'an empty guide URL retains the legacy fallback');
+assert.equal(siteRuntimeConfig(mutate(sourceSite, ['project', 'guideUrl'], 'https://example.test/fork-guide/')).links.guide,
+  'https://example.test/fork-guide/', 'fork customizations must use their validated guide URL');
 const sharedSource = readFileSync(join(ROOT, 'site', 'wrt', 'lib', 'site-config.js'), 'utf8');
 assert.doesNotMatch(sharedSource, /from ['"]node:|require\(['"]node:|\blocalStorage\b|document\.(?:baseURI|querySelector)/,
   'shared site validator must remain pure and browser-loadable');
@@ -94,6 +104,10 @@ const invalidSiteCases = [
   ['unknown nested key', ['firmware', 'password'], { mode: 'prompt' }, 'unknown key'],
   ['repository syntax', ['project', 'repository'], 'not a repository', 'invalid format'],
   ['blog URL protocol', ['project', 'blogUrl'], 'http://example.test/', 'must use https'],
+  ['guide URL protocol', ['project', 'guideUrl'], 'http://example.test/', 'must use https'],
+  ['guide executable URL', ['project', 'guideUrl'], 'javascript:alert(1)', 'must use https'],
+  ['guide URL credentials', ['project', 'guideUrl'], 'https://user:secret@example.test/', 'no credentials'],
+  ['guide URL type', ['project', 'guideUrl'], null, 'must be a string'],
   ['short name control character', ['project', 'shortName'], 'Wei.\nG', 'control characters'],
   ['legacy fixed language default', ['ui', 'defaultLanguage'], 'en', 'must be one of auto'],
   ['unknown NTP preset', ['firmware', 'ntp', 'preset'], 'custom', 'must be one of cn, global, cloudflare'],
