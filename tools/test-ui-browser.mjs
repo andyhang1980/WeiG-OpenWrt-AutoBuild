@@ -22,6 +22,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SITE_ROOT = join(ROOT, 'site', 'wrt');
 const SITE_CONFIG = JSON.parse(readFileSync(join(SITE_ROOT, 'config', 'site.json'), 'utf8'));
+const EXPECTED_GUIDE_URL = new URL(SITE_CONFIG.project.guideUrl ||
+  'https://github.com/' + SITE_CONFIG.project.repository + '#fork-自建').href;
 const REQUIRED_IDS = Object.freeze([
   'sideDock', 'dockToggle', 'langSel', 'selfTestBtn', 'densityBtn', 'themeBtn',
   'fontPanel', 'fontDec', 'fontInput', 'fontInc', 'fontReset',
@@ -1058,7 +1060,7 @@ async function main() {
     }`);
     expect(forkGuide?.length === 2 && forkGuide[0]?.href ===
       'https://github.com/' + SITE_CONFIG.project.repository + '/fork' &&
-      forkGuide[1]?.href === SITE_CONFIG.project.guideUrl &&
+      forkGuide[1]?.href === EXPECTED_GUIDE_URL &&
       forkGuide.every(link => link.target === '_blank' && link.rel.includes('noopener')),
     context, 'Fork hint destinations or safe link attributes regressed', forkGuide);
 
