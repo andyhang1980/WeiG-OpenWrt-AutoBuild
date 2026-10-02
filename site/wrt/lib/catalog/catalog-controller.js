@@ -259,18 +259,41 @@ function refreshCatalogBranchApplications() {
   updateStats();
   return true;
 }
-async function ensureCatalogPackageSizes() {
+function setCatalogPackageSizesStatus(key, state, detail = {}) {
+  catalogPackageSizesStatus = { key, state, ...detail };
+  importLogStep('package-sizes', {
+    ...catalogPackageSizesStatus,
+    assetRef: MENU_INDEX?.assetRef || '',
+    source: MENU_CATALOG?.source?.id || '',
+    branch: MENU_CATALOG?.source?.branch || '',
+  });
+}
+async function ensureCatalogPackageSizes(retry = false) {
   const catalogKey = menuCatalogKey;
-  if (!MENU_CATALOG?.splitAssets || !catalogShardLoader || !catalogKey) return null;
+  if (!MENU_CATALOG?.splitAssets || !catalogShardLoader || !catalogKey) {
+    if (MENU_CATALOG && !MENU_CATALOG.splitAssets && catalogPackageSizesStatus.state !== 'unavailable') {
+      catalogPackageSizesDocument = null;
+      catalogPackageSizesKey = '';
+      setCatalogPackageSizesStatus(catalogKey, 'unavailable', { reason: 'size-contract-unavailable' });
+    }
+    return null;
+  }
   const architecture = CATALOG_ENGINE.decodeKconfigString(String(catalogEngineValues().get('TARGET_ARCH_PACKAGES') || ''));
   const assets = selectedCatalogBranch(selectedCatalogSource())?.assets || {};
   const logical = assets[`packageSizes:${architecture}`] ? `packageSizes:${architecture}` : 'packageSizes';
   const contract = assets[logical];
   const key = `${catalogKey}:${architecture}`;
   if (catalogPackageSizesKey === key) return catalogPackageSizesDocument;
+  // A transport/validation failure is retryable, not negative coverage. Do
+  // not turn repeated UI renders into an unbounded background retry loop.
+  if (!retry && catalogPackageSizesStatus.key === key && catalogPackageSizesStatus.state === 'error') return null;
   if (!architecture || !contract?.asset || (contract.architecture && contract.architecture !== architecture) || contract.installedItems === 0) {
     catalogPackageSizesDocument = null;
     catalogPackageSizesKey = key;
+    setCatalogPackageSizesStatus(key, 'unavailable', { architecture, logical,
+      reason: !architecture ? 'native-architecture-unavailable' : !contract?.asset ? 'architecture-not-published'
+        : contract.architecture && contract.architecture !== architecture ? 'architecture-mismatch'
+          : contract.reason || 'no-matching-installed-size-observations' });
     refreshCatalogBranchApplications();
     return null;
   }
@@ -279,13 +302,16 @@ async function ensureCatalogPackageSizes() {
   const loader = catalogShardLoader;
   const invalidateDisplay = catalogPackageSizesDocument != null;
   catalogPackageSizesDocument = null;
+  setCatalogPackageSizesStatus(key, 'loading', { architecture, logical, asset: contract.asset });
   const run = (async () => {
     try {
-      const document = validateCatalogPackageSizes(await loader(logical), catalog);
+      const document = validateCatalogPackageSizes(await loader(logical, { forceRefresh: retry }), catalog);
       if (MENU_CATALOG !== catalog || menuCatalogKey !== catalogKey ||
           CATALOG_ENGINE.decodeKconfigString(String(catalogEngineValues().get('TARGET_ARCH_PACKAGES') || '')) !== architecture) return null;
       catalogPackageSizesDocument = document;
       catalogPackageSizesKey = key;
+      setCatalogPackageSizesStatus(key, 'ready', { architecture, logical, asset: contract.asset,
+        items: document.rows.length });
       refreshCatalogBranchApplications();
       return document;
     } catch (error) {
@@ -293,7 +319,9 @@ async function ensureCatalogPackageSizes() {
       if (MENU_CATALOG === catalog && menuCatalogKey === catalogKey &&
           CATALOG_ENGINE.decodeKconfigString(String(catalogEngineValues().get('TARGET_ARCH_PACKAGES') || '')) === architecture) {
         catalogPackageSizesDocument = null;
-        catalogPackageSizesKey = key;
+        catalogPackageSizesKey = '';
+        setCatalogPackageSizesStatus(key, 'error', { architecture, logical, asset: contract.asset,
+          reason: String(error.message || error).slice(0, 500) });
         refreshCatalogBranchApplications();
       }
       return null;
@@ -308,6 +336,7 @@ async function ensureCatalogPackageSizes() {
   catalogPackageSizesPromise = settled;
   catalogPackageSizesPromiseKey = key;
   if (invalidateDisplay) refreshCatalogBranchApplications();
+  else updateStats();
   return settled;
 }
 async function ensureCatalogApplications(forceRefresh = false) {
@@ -1242,6 +1271,7 @@ async function loadCatalog(source, branch, applyDefault = true, requested = null
     menuCatalogKey = key;
     catalogPackageSizesDocument = null;
     catalogPackageSizesKey = '';
+    catalogPackageSizesStatus = { key: '', state: 'idle', reason: '' };
     if (catalog.splitAssets) buildMenuStartupIndexes(catalog);
     else buildMenuIndexes(catalog);
     resetCatalogSelectionLayers();

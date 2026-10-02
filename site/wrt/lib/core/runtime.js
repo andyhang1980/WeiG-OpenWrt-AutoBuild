@@ -152,6 +152,7 @@ let compatibilityPrefetchTimer = null;
 let catalogApplicationsPromise = null, catalogApplicationsDocument = null;
 let catalogPackageSizesPromise = null, catalogPackageSizesPromiseKey = '';
 let catalogPackageSizesKey = '', catalogPackageSizesDocument = null;
+let catalogPackageSizesStatus = { key: '', state: 'idle', reason: '' };
 let catalogApplicationsLoadState = 'loading', catalogApplicationsError = '';
 let selfTestViewToken = 0;
 let catalogStartupPromise = null, catalogApplicationsDemanded = false, catalogApplicationsObserver = null;

@@ -361,6 +361,14 @@ function effectiveSelection() {
   }
   return { normal, forced, removed, all: normal.concat(forced) };
 }
+function effectiveEnabledPlugins() {
+  if (state.device?.id !== 'catalog-target' || !MENU_CATALOG) return effectiveSelection().all;
+  const values = catalogEngineValues();
+  return PLUGINS.plugins.filter((plugin) => {
+    const option = curatedMenuOption(plugin);
+    return option && ['y', 'm'].includes(values.get(option.symbol));
+  });
+}
 
 function updateLegend() {
   let ok = 0, builtin = 0, off = 0;
@@ -534,10 +542,19 @@ function openRootfsCapacityGuidance() {
 function updateStats() {
   void ensureCatalogPackageSizes();
   const sel = effectiveSelection();
-  const n = sel.all.length;
-  $('selCount').textContent = t('bar.selected', { n });
+  const n = effectiveEnabledPlugins().length;
+  $('selCount').textContent = state.device?.id === 'catalog-target'
+    ? t('bar.selectionSummary', { n, direct: sel.all.length }) : t('bar.selected', { n });
   const rootfs = rootfsPartitionInfo();
   const packageSizes = packageSizeEstimate();
+  const sizeState = state.device?.id === 'catalog-target' ? catalogPackageSizesStatus.state : 'unavailable';
+  const sizeMessage = t(sizeState === 'loading' || sizeState === 'idle' ? 'size.summary.loading'
+    : sizeState === 'error' ? 'size.summary.error'
+      : sizeState === 'ready' ? 'size.summary.noSelectedCoverage' : 'size.summary.unavailable');
+  const sizeRetry = $('sizeRetryBtn');
+  sizeRetry.hidden = sizeState !== 'error';
+  const sizeTooltip = packageSizes ? packageSizeEstimateTooltip(packageSizes)
+    : [sizeMessage, catalogPackageSizesStatus.architecture || '', catalogPackageSizesStatus.reason || ''].filter(Boolean).join('\n');
   const capText = $('capText');
   const capacity = packageSizeCapacityStatus(packageSizes, rootfs?.value);
   capText.classList.toggle('capacity-warning', capacity?.level === 'warning');
@@ -548,13 +565,13 @@ function updateStats() {
     capText.classList.add('rootfs-capacity');
     capText.textContent = packageSizes
       ? `${rootfs.value} MiB · ${packageSizeEstimateText(packageSizes)}`
-      : `${rootfs.value} MiB`;
+      : `${rootfs.value} MiB · ${sizeMessage}`;
     if (capacity?.level) capText.textContent += ' · ' + t('size.capacity.short', {
       percent: `${capacity.partial ? '≥' : ''}${capacity.percent}`,
     });
     bindUiTooltipContent(capText, { body: [
       t('runtime.2b2a5917809a'),
-      packageSizes ? packageSizeEstimateTooltip(packageSizes) : t('size.summary.unavailable'),
+      sizeTooltip,
       capacity?.level ? t(capacity.partial ? 'size.capacity.partial' : 'size.capacity.warning', { percent: capacity.percent }) : '',
     ].filter(Boolean).join('\n') });
   } else if (packageSizes) {
@@ -569,8 +586,8 @@ function updateStats() {
     capText.classList.remove('rootfs-capacity');
     $('capFill').style.width = '0';
     $('capFill').className = 'cap-fill';
-    capText.textContent = t('size.summary.unavailable');
-    bindUiTooltipContent(capText, { body: t('size.summary.unavailable') });
+    capText.textContent = sizeMessage;
+    bindUiTooltipContent(capText, { body: sizeTooltip });
   }
   updateGroupBadges();
   renderBuildContract();
@@ -579,7 +596,9 @@ function updateStats() {
 /* ============ 已选清单 / Selected list ============ */
 function openSelectedDrawer() {
   const sel = effectiveSelection();
-  const rows = sel.normal.concat(sel.forced).map((p) => ({ p, kind: sel.forced.includes(p) ? 'force' : '' }))
+  const enabled = effectiveEnabledPlugins();
+  const rows = [...new Set(enabled.concat(sel.all))].map((p) => ({ p,
+    kind: sel.forced.includes(p) ? 'force' : '', inherited: !sel.all.includes(p) }))
     .concat(sel.removed.map((p) => ({ p, kind: 'remove' })));
   openModal(t('drawer.title'));
   const mb = $('modalBody');
@@ -592,11 +611,18 @@ function openSelectedDrawer() {
   }
   const list = document.createElement('div');
   list.className = 'sel-list';
-  for (const { p, kind } of rows) {
+  for (const { p, kind, inherited } of rows) {
     const row = document.createElement('div');
     row.className = 'sel-row';
     const name = document.createElement('span');
     name.textContent = pName(p);
+    if (inherited) {
+      const flag = document.createElement('span');
+      flag.className = 'flag';
+      const value = catalogEngineValues().get(curatedMenuOption(p)?.symbol) || '';
+      flag.textContent = t('drawer.effective', { value: value.toUpperCase() });
+      name.appendChild(flag);
+    }
     if (kind) {
       const f = document.createElement('span');
       f.className = 'flag ' + (kind === 'force' ? 'flag-force' : 'flag-remove');
@@ -611,18 +637,24 @@ function openSelectedDrawer() {
     const rm = document.createElement('button');
     rm.type = 'button';
     rm.className = 'sel-rm';
-    rm.textContent = '✕';
-    rm.setAttribute('aria-label', t('drawer.remove', { name: pName(p) }));
+    rm.textContent = inherited ? '↗' : '✕';
+    rm.setAttribute('aria-label', t(inherited ? 'drawer.edit' : 'drawer.remove', { name: pName(p) }));
     rm.addEventListener('click', () => {
       const catalogOption = state.device?.id === 'catalog-target' ? curatedMenuOption(p) : null;
+      if (inherited && catalogOption) {
+        closeModal();
+        focusMenuconfigSymbol(catalogOption.symbol).catch((error) => showToast(error.message));
+        return;
+      }
       if (catalogOption) restoreCatalogDefault(catalogOption);
       else if (kind === 'remove') state.removed.delete(p.id);
       else state.sel.delete(p.id);
       const cb = document.querySelector('input[data-pid="' + p.id + '"]');
       if (cb && !catalogOption) cb.checked = kind === 'remove';
       updateStats();
-      row.remove();
-      if (!list.children.length) closeModal();
+      // Restoring intent may leave an inherited/default-Y plugin enabled.
+      // Reconcile the drawer from the same effective state as the counter.
+      openSelectedDrawer();
     });
     row.appendChild(name); if (sz) row.appendChild(sz); row.appendChild(rm);
     list.appendChild(row);
@@ -637,5 +669,6 @@ function openSelectedDrawer() {
   }
 }
 $('selCount').addEventListener('click', openSelectedDrawer);
+$('sizeRetryBtn').addEventListener('click', () => { void ensureCatalogPackageSizes(true); });
 
 /* ============ 生成 .config / Generate the .config ============ */

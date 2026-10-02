@@ -1,144 +1,96 @@
-# WeiG-OpenWrt-AutoBuild
+# Wei.G OpenWrt 固件在线定制
 
-OpenWrt 固件在线定制与 GitHub Actions 云编译工具。网页直接读取 [WeiG-OpenWrt-Menuconfig-Catalog](https://github.com/weigefenxiang/WeiG-OpenWrt-Menuconfig-Catalog) 的 Source、Branch、Target/Profile、Kconfig、精选应用、软件包体积与兼容性规则；AutoBuild 不再维护第二套机型、种子配置或插件数据库。
+在网页选择设备和插件，提交 GitHub 请求，让云端为你编译 OpenWrt 固件。
 
-**语言**：[English](README.en.md) · 简体中文
+📱 桌面与手机适配 · 🌙 明暗主题 · 📂 导入已有配置 · 🔎 配置检查与兼容性推荐
 
-- 定制页面：[Weige Share](https://www.weigshare.com/wrt/)
-- 构建仓库：[WeiG-OpenWrt-AutoBuild](https://github.com/weigefenxiang/WeiG-OpenWrt-AutoBuild)
-- 数据仓库：[WeiG-OpenWrt-Menuconfig-Catalog](https://github.com/weigefenxiang/WeiG-OpenWrt-Menuconfig-Catalog)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](../LICENSE)
+[![GitHub Actions](https://img.shields.io/badge/Build-GitHub%20Actions-2088FF)](https://github.com/weigefenxiang/WeiG-OpenWrt-AutoBuild/actions/workflows/custom-build.yml)
 
-## 使用方法
+**[🌐 在线定制](https://www.weigshare.com/wrt/) · [⬇️ 固件下载 / 查看构建](https://github.com/weigefenxiang/WeiG-OpenWrt-AutoBuild/actions/workflows/custom-build.yml)**
 
-1. 依次选择 **Source → Branch → Target System → Subtarget → Target Profile**。
-2. 用精选应用或 Advanced menuconfig 修改配置；N/M/Y、依赖、默认值和可见性均以当前 Catalog 的 Kconfig 为准。
-3. 点 **提交云编译 → 下载请求并打开 GitHub**，只上传网页生成的 `build-request.json` 后创建 Issue。
-4. Actions 完成后，在 Run 底部下载固件和资料。
+语言：[English](README.en.md) · 简体中文
 
-网页也可导入 `build-request.json`、`.config` 或 `config.buildinfo`。Schema 6 构建以精确的 Catalog Native Profile 基线加语义化用户 overrides 重建权威配置。**Defconfig** 默认关闭；只有用户主动启用时，才在重建完成后作为可选规范化步骤运行。
+> 刷机前先确认完整型号、硬件版本和刷机方法，并备份当前配置。名称相似的设备不一定通用；社区固件不保证适用于你的设备。
 
-配置检查在点击“检”或生成构建请求时进行，不在导入时弹出。数值与字符串项使用对应类型的控件，并与推荐共用同一 Kconfig 约束。失效赋值可以移除，不会为了保留容量值自动开启其它镜像格式；未知或有歧义的修改仍需用户判断。应用推荐后再次点击“检”，从已部署的新网页导出新请求；重跑旧请求仍使用其锁定的旧 Worker 代码。
+## 界面预览
 
-Worker 通过无构建配方的 GNU Make 适配器展开上游 `.packagedeps`，检查构建兼容性；`.packageinfo` 提供实体包和源码身份，不再维护另一套推测的编译图。源码编译不要求安装产物包，多提供者均未启用时也不误报依赖未决。`BUILD-LOGS` 保存 `package-info.txt.gz`、`package-deps.mk.gz`、配置与图证据，支持离线排查。闭包检查通过不等于固件实际构建成功。
+### 电脑端
 
-大型配置导入复用当前快照的依赖索引，并在有序 Kconfig 操作之间让出页面绘制时间。统一加载提示显示进度，配置控件暂时锁定，但页面仍可滚动。必要的选择弹窗可操作，失败时恢复之前的工作区，完成或异常后自动解锁。导入仍不会自动弹出兼容性推荐。
+![电脑端在线定制界面](../docs/images/wrt-desktop.png)
 
-## 克隆与项目配置
+### 手机端
 
-新 Catalog 快照同时固定 feeds 的顺序、地址、方法、选项和提交。Worker 通过上游工具
-安装这些精确 feeds，不再静默追随更新的分支。自检和导出检查实际序列化配置，推荐修改
-同一有效状态后再导出。schema-6 兼容性偏好复用共享 planner，保留旧 Catalog schema
-与历史配置导入能力。这些检查不保证固件一定编译成功，也不增加通用依赖门禁。
+<img src="../docs/images/wrt-mobile.png" alt="手机端在线定制界面" width="360">
 
-克隆者或部署者要分别维护两个职责隔离的配置源：
+## 新手使用：五步生成自己的固件
 
-- `site/wrt/config/site.json` 是公开网页的唯一配置源，包含品牌、Catalog 地址与选择/加载策略、网页外观、固件默认值和默认构建标识。浏览器只读取这个文件。
-- `config/build.json` 是构建端的唯一配置源，只包含密码模式、`jobs.compile`、`jobs.download` 和 `admission.publicActiveBuilds`。它属于仓库根目录，绝不能被浏览器读取或部署到静态站点。
+### 1. 选择设备
 
-复制仓库后按需编辑对应文件，在工作树运行 `prepare`，并将配置与 `prepare` 产生的受控输出一起提交：
+打开 [在线定制页面](https://www.weigshare.com/wrt/)，依次选择源码（Source）、版本（Branch）、Target System、Subtarget 和 Target Profile。
 
-```powershell
-node tools/dev-assistant.mjs prepare
-```
+**以设备官方资料和对应源码的支持列表为准，不要凭名字猜型号。** 插件和机型是否提供，由所选源码、版本和设备决定。
 
-`prepare` 会校验两份配置并更新构建脚本使用的 `Shell/build-defaults.conf`；生成文件不能作为配置源直接修改。配置字段边界如下：
+### 2. 勾选插件，或加载已有配置
 
-| 配置文件/区块 | 可配置内容 | 边界 |
-| --- | --- | --- |
-| `site/wrt/config/site.json` → `project` | `displayName`、`shortName`、仓库地址、博客地址 | 只用于站点展示和链接；不会改变网关身份、`[build]` 协议或 Run/Artifact 标题格式 |
-| `site/wrt/config/site.json` → `catalog` | Catalog 仓库、发布标签、Source/Branch 首选顺序、首选 Target selector、加载队列 | Source、Branch、Target/Profile、插件、Kconfig 和兼容性事实仍由 Catalog 数据负责，不在这里维护清单 |
-| `site/wrt/config/site.json` → `ui` | 浏览器自动语言、颜色模式 | `defaultLanguage` 保留为兼容字段并固定为 `auto`；按浏览器语言选择，无匹配时使用英文 |
-| `site/wrt/config/site.json` → `firmware` | LAN 地址、时区、主题、NTP、软件包镜像 | `timezone` 仍是构建请求缺省值，不覆盖网页浏览器时区检测；敏感内容不得写入配置 |
-| `site/wrt/config/site.json` → `build` | 默认构建标识 `defaultTag` | 只提供网页默认值，不能绕过构建请求校验 |
-| `config/build.json` → `password` | `mode`：`prompt`、`empty` 或 `secret` | 仅由构建端读取，不属于网页配置 |
-| `config/build.json` → `jobs` | `compile`、`download` 并发（整数或 `auto`） | 仅控制构建端并发，不能改变请求语义 |
-| `config/build.json` → `admission` | `publicActiveBuilds` | 仅控制公共构建准入上限 |
+在“② 勾选插件”选择需要的功能；不会选时，可以保持默认。高级选项放在 **Advanced menuconfig**，不熟悉的选项不必修改。
 
-网页语言由浏览器 `navigator.languages` 自动选择；没有匹配翻译时回退英文。网页时区按“已保存选择 → 浏览器精确匹配 → 相同 UTC 偏移 → `Etc/GMT`”选择；`firmware.timezone` 仍保留为构建请求的默认值，但不会覆盖这次浏览器检测。
+已有配置可点击 **加载配置**，选择 `build-request.json`、旧版请求 JSON、`.config` 或 `config.buildinfo`，再确认源码与版本。加载后检查设备、插件和 RootFS 容量，旧配置不一定适合新源码。
 
-密码模式为 `prompt` 时由提交者填写；`empty` 表示明确使用空密码；`secret` 模式必须在该仓库的 Secrets 中配置 `DEFAULT_ROOT_PASSWORD`。实际密码绝不能写入 `config/build.json`、站点文件、构建请求、Issue 或日志。
+底栏区分实际启用与自选插件，点击可查看清单。有可靠数据时显示软件包已知安装大小；未知项不算作零，估算也不等于最终固件大小。
 
-### 独立部署 `site/wrt`
+### 3. 填写设置并检查
 
-`site/wrt` 是可独立托管的完整静态网页；将整个目录（包括 `config/`、`data/`、HTML、脚本和样式）部署到 Blog、Pages 或其他静态站点即可。实际部署必须从包含上述已提交配置和受控输出的 40 位 SHA 的干净 checkout 运行：
+按需填写管理地址、时区、主题和构建标识；构建标识用于找到自己的固件。
 
-```powershell
-node tools/prepare-web-deployment.mjs --commit <40位SHA> --branch <dev或main>
-```
+点击右侧 **“检”**。出现推荐时先查看原因，再应用并重新检查；需要人工判断的问题不要直接忽略。加载失败时可下载加载日志帮助排查。
 
-该命令会生成被忽略的 `site/wrt/data/build-meta.json`。部署必须携带与 `site-version.json` 匹配的元数据；元数据缺失、非法或陈旧时，网页会禁用提交。Pages workflow 的站点准备阶段只执行 `node tools/stamp-site-version.mjs --check` 和 `prepare-web-deployment`，不在部署现场修改配置。独立托管只改变网页的发布位置，不改变构建身份：构建请求仍必须对应目标 AutoBuild 仓库的同一提交。Catalog 的 Source、Branch、Target/Profile、插件、Kconfig、依赖和兼容性事实仍全部来自 Catalog；本仓库配置不能声明或修改这些高级 Catalog 事实。
+> 不要把真实密码、访问令牌或其它私密信息上传到公开 Issue、请求文件和日志。
 
-## 产物与命名
+### 4. 提交云编译
 
-Run 显示名采用：
+点击 **提交云编译 → 下载请求并打开 GitHub**。
 
-```text
-staging-260810_0857/匿名#161/Generic_x86/64/lede/master/generic
-```
+网页会下载 `build-request.json` 并打开 Issue 页面。登录 GitHub，把刚下载的文件上传到 Issue，然后提交。**只下载文件而没有创建 Issue，不会开始云编译。**
 
-Artifact 采用：
+也可以选择“仅下载 .config”，保存配置自行编译；它不会启动云端任务。
 
-```text
-staging-260810_0857-匿名#161-BUILD-LOGS
-```
+### 5. 找到并下载固件
 
-构建标识仍由用户填写；`#161` 是原始 Build Issue 编号。所有用户可下载的固件、CONFIG、BUILD-LOGS、OPTIONAL-PACKAGES 和 FIRMWARE-OTHER 统一保留 **60 天**。仅供同一 Run 内部转发原始镜像的 RAW-BRIDGE 保留 1 天并在发布后删除。
+打开 [Actions → Firmware Download / 固件下载](https://github.com/weigefenxiang/WeiG-OpenWrt-AutoBuild/actions/workflows/custom-build.yml)，按构建标识和 Issue 编号找到自己的 Run。
 
-## 数据与兼容性
+等待构建完成后，在 Run 页面底部的 **Artifacts** 下载固件压缩包（GitHub 通常要求登录），解压后按设备对应的刷机方法使用。产物保留 **60 天**，请及时保存。
 
-- 网页与 Worker 共用 Catalog 图选择与校验：优先使用已声明的 schema-5 `graphCompact`，否则读取旧图。关系 schema 以解码后的资产内容为准，index 可选声明必须与其一致。Worker 重建仍要求完整 typed relations，以及精确的源码、hash、size 身份；历史配置导入继续保留。请求校验失败且尚未生成产物身份时，只保留诊断日志，不尝试发布固件。
-- 页面启动后优先下载当前 Source/Branch 的菜单和语言；精选应用、隐藏项、帮助、兼容性规则和镜像策略按 `site/wrt/config/site.json` 中 `catalog.loading` 的空闲队列顺序后台加载。
-- 精选应用名单、中文/英文介绍与跨源软件包体积都属于 Catalog。应用 ID 相同即视为同一项；体积显示三位有效数字，缺少可靠官方观测时明确显示未知。
-- `compatibility.json` 接受 schema 2–5。schema 4 可通过 `buildDependency` 将已验证的构建故障绑定到一个构建包；新图决策从精确 Catalog 图推导触发入口，旧的 `triggerPackages` 只读兼容、不再驱动新的告警或动作。schema 4 relation 资产会在 compact 编解码 round-trip 中保留 typed default、range、visibility、choice、select/imply 关系、软件包 capability 和表达式 AST。只有 `relationsComplete: true` 且 `relationCapabilities` 含 `complete-kconfig-relations-v1` 才表示完整 typed relation graph。独立的 `packageClosureComplete: true` 加上 `packageClosureCapabilities` 中的 `complete-package-build-closure-v1` 只表示软件包构建闭包完整，绝不能把不完整的 typed relation graph 提升为完整。schema 5 可把精确观测保存在 `evidence`，并让经明确审核的 `preventive` 策略仅在失败包真实存在的通配环境中适用。图证据未知或有歧义时结果为 inconclusive，网页不得猜测告警或动作。
-- 构建故障建议使用精确 Catalog 图：反向索引只用于找候选，之后必须用每个候选自己的前向 dependency、select/imply 和 package-provider 关系证明。计划只包含最少的用户可控根节点和失败包；共享 Kconfig intent 负责自动清理。三层名称必须分开：上游 `.config` 使用 `CONFIG_PACKAGE_<name>`，Catalog/Kconfig 模型使用 `PACKAGE_<name>`，构建闭包使用上游 `.packageinfo` 与 Makefile 中的真实软件包名。virtual capability 只是 provider 名称，不得生成配置符号或软件包记录；提供 capability 的 owner 也不得与自己的 capability 自冲突。
-- 编译前 Worker 对 `.config` 做 hash，运行 `make prepare-tmpinfo V=s`，要求配置不变且原生 `.packageinfo` / `.packagedeps` 非空。无构建配方的 GNU Make 适配器展开已生成的依赖赋值，不加载顶层构建 Makefile，不运行 Defconfig。Target/host、已选/默认变体、同源码过滤和提供者条件保留原生语义。原生图证据或活动源码身份缺失仍待定。快照绑定的类型凭据区分包配置子选项与实体包，刷新的真实原生包记录优先。
-- 共享 runtime 保留原生 Kconfig 边界：bool default `m` 作为 typed source value 保留；注释只在引号外删除；引号外的 `@` 只作为 ignored-character warning，周围仍是普通 AST，`@` 后面的 symbols 不能丢失。没有未求值动态预处理的完整 active-source proof 才能区分 native undefined 和 Target projection omission；external symbol 类型只能来自真实解析定义及明确的 projection provenance。未求值的 `$(shell,...)` 或动态赋值会保持 relations incomplete，并延后判断。
-- Choice 的 `reset if` 会保存在 Catalog 数据中，但上游 mconf/nconf 只有在交互式地把非 Y 成员切换为 Y 时才会清空全局 `S_DEF_USER` 层。静态导入、序列化、Worker 重建和网页交互不宣称已经复现这个全局 reset；不支持或未决的 reset 交互必须明确返回 `unsupported`/`deferred`。
-- AutoBuild 不做每周数据同步；未来 Source/Branch 和 Catalog 数据分支发布后，网页自动读取，无需更新 AutoBuild 源码。
+**红色 Run 不代表一定有可用固件。** 先查看失败步骤和 `BUILD-LOGS`，不要把日志、配置或其它辅助产物当成固件刷入。
 
-## 快速测试
+## 常见问题
 
-### 运行性能与历史配置导入
+<details>
+<summary>找不到我的设备或插件？</summary>
 
-- 新 Catalog 快照可声明 `graphCompact`、relation schema 5。加载器优先读取并校验不可变资产契约，用共享定义/表达式表还原图，不丢弃关系事实。旧图格式和历史 config/JSON 导入继续兼容；已声明资产校验失败时不能静默换成另一快照。
-- Provider 与依赖索引按模型缓存，compatibility 文档只在边界规范化一次，健康配置预检不再构造修复计划。构建故障清理可检查已关闭失败目标的依赖，但这些只是清理候选，不代表它们会编译该目标。仍被共享、受保护或证据未决的依赖保留并说明，不维护静态包家族名单。
-- Typed default 只有在所属符号的依赖允许时才能补入。所属依赖未启用或未知，不能凭空补出正值 bool/tristate 或 scalar，进而破坏主题等无关选择。回归覆盖 bool、tristate、string、int、hex 的未启用、未知、启用三种情况。
-- 导入本身不弹兼容性对话框；单击“检”或生成/下载构建 JSON 才进行配置预检与兼容性检查。应用推荐后，关闭已应用结果框，让本次检查继续完成；证据未决必须明确说明，不能猜一个修复方案强行点亮按钮。
+可用项取决于源码、版本和设备。确认完整型号与所选版本；不要用近似型号替代。没有提供的插件不能保证强行启用后能编译。
+</details>
 
-### 本地检查
+<details>
+<summary>为什么没有显示插件大小？</summary>
 
-```powershell
-node tools/test-catalog-engine.mjs
-node tools/test-build-closure.mjs
-node tools/check-all.mjs
-node tools/dev-assistant.mjs prepare
-node tools/dev-assistant.mjs verify
-```
+不是所有源、版本和架构都提供可靠的安装大小。页面会区分加载中、加载失败和缺少匹配数据；失败时可以重试。没有大小不影响查看已启用插件清单，也不会凭空显示 0 B。
+</details>
 
-本地预览：
+<details>
+<summary>修改旧配置后，应该重跑旧 Run 吗？</summary>
 
-```powershell
-node tools/serve.mjs
-```
+不要用旧 Run 验证新配置。请在当前网页重新加载、检查、导出请求并创建新 Issue；旧 Run 重跑仍使用原请求锁定的代码和数据。
+</details>
 
-打开 <http://localhost:8642/>，测试 Source/Branch 切换、Target/Profile、精选应用、Advanced menuconfig、兼容性弹窗、自检和请求下载。
+## 开发与部署
 
-## 维护边界
+普通用户无需克隆仓库或安装 Node.js。克隆部署、项目配置、数据架构和测试说明见 [开发者指南](../docs/DEVELOPER.md) 与 [架构说明](../ARCHITECTURE.md)。
 
-- Catalog 是 Kconfig、dependency、menu、symbol/type、Source/Branch、精选应用、体积和兼容性规则的权威数据源。
-- `site/wrt/app.js` 不得写具体插件或规则特判；构建端不加插件冲突锁。
-- 新增或调整精选应用请在 Catalog 运行人工刷新工具并审核介绍；体积由官方 OPKG/APK 索引自动计算。
-- 修改网页翻译请编辑 `tools/i18n-source.json` 与 `tools/i18n-translations.json`；`site/wrt/data/i18n/` 是生成包，不要直接编辑。
-- 包级回归使用网页自检中的“插件兼容探针”。它复用 Advanced menuconfig 的 Kconfig 状态，并按 Catalog 说明提供 L1 配置求解到 L7 重启验证七级深度。L2-L7 默认在同一 Job 内执行 Baseline B → Final A 对照；只有显式选择 Final-only 才关闭对照。GitHub 在创建 Matrix 前重新校验权限和请求。
-- 每次修改 AutoBuild 必须运行 `prepare`，按 Asia/Shanghai 更新 `VERSION` 与 `site-version.json`。
-- 克隆后按职责分别编辑 `site/wrt/config/site.json` 与 `config/build.json`，再运行 `prepare`；不要把 Catalog 的 Source/Branch、Target/Profile 或插件事实复制到本仓库。
+源码与插件数据来自 [Menuconfig Catalog](https://github.com/weigefenxiang/WeiG-OpenWrt-Menuconfig-Catalog)。
 
-更完整的边界和流程见 [ARCHITECTURE.md](../ARCHITECTURE.md) 与 [开发者指南](../docs/DEVELOPER.md)。
+## 鸣谢与许可证
 
-## 许可证
+[OpenWrt](https://github.com/openwrt/openwrt) · [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) · [Lean LEDE](https://github.com/coolsnowwolf/lede) · [hanwckf mt798x](https://github.com/immortalwrt/immortalwrt-mt798x) · LuCI 及所有插件作者。
 
-本项目以 [GNU GPLv3 或更高版本](../LICENSE) 发布；[中文说明](../LICENSE.zh-CN.md) 仅供参考。版权与公开联系方式见 [NOTICE](../NOTICE)。
-
-## 鸣谢
-
-[OpenWrt](https://github.com/openwrt/openwrt) · [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) · [Lean LEDE](https://github.com/coolsnowwolf/lede) · [hanwckf mt798x](https://github.com/immortalwrt/immortalwrt-mt798x) · LuCI 及所有软件包作者。
+本项目采用 [GNU GPLv3 或更高版本](../LICENSE)。版权与联系方式见 [NOTICE](../NOTICE)。

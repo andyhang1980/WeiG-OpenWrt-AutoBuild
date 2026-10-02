@@ -115,8 +115,9 @@ expect(html.includes('data-i18n="btn.import.short"') && html.includes('data-i18n
   app.includes('function validateCatalogBranchApplications(catalog)') &&
   app.includes('function catalogPackageSizeMap(document = catalogPackageSizesDocument)') &&
   app.includes('function validateCatalogPackageSizes(document, catalog = MENU_CATALOG)') &&
-  app.includes('async function ensureCatalogPackageSizes()') &&
-  app.includes('loader(logical)') &&
+  app.includes('async function ensureCatalogPackageSizes(retry = false)') &&
+  app.includes('loader(logical, { forceRefresh: retry })') &&
+  html.includes('id="sizeRetryBtn"') && app.includes("setCatalogPackageSizesStatus(key, 'error'") &&
   app.includes("kind !== 'branch-applications'") &&
   css.includes('.cap-info.rootfs-capacity::before{content:"RootFS "}') &&
   css.includes('.cap-info.rootfs-capacity::before { content: ""; }'),
@@ -804,7 +805,8 @@ const groupBadgeContract = app.match(/function updateGroupBadges\(\) \{([\s\S]*?
 const statsContract = app.match(/function updateStats\(\) \{([\s\S]*?)\n\}/)?.[1] || '';
 expect(groupBadgeContract.includes("curatedPluginIntent(p) === 'selected'") &&
   !groupBadgeContract.includes('state.removed') &&
-  statsContract.includes('const n = sel.all.length;') &&
+  statsContract.includes('const n = effectiveEnabledPlugins().length;') &&
+  statsContract.includes("t('bar.selectionSummary', { n, direct: sel.all.length })") &&
   !statsContract.includes('sel.all.length + sel.removed.length'),
   'an excluded plugin is still mislabeled or counted as selected');
 expect(css.includes('.plugin input[type="checkbox"]:not(:disabled):hover') &&

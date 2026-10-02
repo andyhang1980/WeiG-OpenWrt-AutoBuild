@@ -138,14 +138,16 @@ const loaderContext = {
     'packageSizes:empty': { asset: 'empty.gz', architecture: 'empty', installedItems: 0 },
   } }),
   catalogPackageSizesDocument: null, catalogPackageSizesKey: '', catalogPackageSizesPromise: null,
-  catalogPackageSizesPromiseKey: '', refreshCatalogBranchApplications: () => {},
+  catalogPackageSizesPromiseKey: '', catalogPackageSizesStatus: { key: '', state: 'idle' },
+  MENU_INDEX: { assetRef: 'snapshot-a' }, importLogStep: () => {}, updateStats: () => {},
+  refreshCatalogBranchApplications: () => {},
   catalogShardLoader: async logical => {
     requests.push(logical);
     return logical.endsWith('arch_a') ? new Promise(resolve => { finishA = resolve; }) : loaded('arch_b');
   },
 };
 vm.createContext(loaderContext);
-vm.runInContext(['catalogPackageSizeMap', 'validateCatalogPackageSizes', 'ensureCatalogPackageSizes']
+vm.runInContext(['catalogPackageSizeMap', 'validateCatalogPackageSizes', 'setCatalogPackageSizesStatus', 'ensureCatalogPackageSizes']
   .map(name => extract(catalogSource, name)).join('\n'), loaderContext);
 const pendingA = loaderContext.ensureCatalogPackageSizes();
 const pendingAgain = loaderContext.ensureCatalogPackageSizes();
@@ -164,10 +166,49 @@ assert.equal(requests.length, 2, 'zero installed-size coverage must not download
 architecture = 'unpublished';
 await loaderContext.ensureCatalogPackageSizes();
 assert.equal(requests.length, 2, 'unpublished architectures must not borrow a default shard');
+assert.equal(loaderContext.catalogPackageSizesStatus.state, 'unavailable');
+architecture = 'arch_a';
+loaderContext.catalogPackageSizesKey = '';
+let retries = 0;
+loaderContext.catalogShardLoader = async () => {
+  retries++;
+  if (retries === 1) throw new Error('temporary transport failure');
+  return loaded('arch_a');
+};
+await loaderContext.ensureCatalogPackageSizes();
+assert.equal(loaderContext.catalogPackageSizesStatus.state, 'error');
+assert.equal(loaderContext.catalogPackageSizesKey, '', 'a failure must not be cached as negative coverage');
+await loaderContext.ensureCatalogPackageSizes();
+assert.equal(retries, 1, 'ordinary UI renders must not create a retry storm');
+await loaderContext.ensureCatalogPackageSizes(true);
+assert.equal(retries, 2, 'an explicit retry can recover for the same target');
+assert.equal(loaderContext.catalogPackageSizesStatus.state, 'ready');
+assert.equal(loaderContext.catalogPackageSizesDocument.observation.architecture, 'arch_a');
+loaderContext.MENU_CATALOG.splitAssets = false;
+await loaderContext.ensureCatalogPackageSizes();
+assert.equal(loaderContext.catalogPackageSizesStatus.state, 'unavailable',
+  'legacy documents without optional size contracts must not display endless loading');
+assert.equal(loaderContext.catalogPackageSizesDocument, null);
+
+// Imported and inherited Y/M applications remain visible without inventing
+// direct user overrides. N is excluded; module packages still do not add size.
+const enabledContext = { state: { device: { id: 'catalog-target' } }, MENU_CATALOG: {},
+  PLUGINS: { plugins: [{ id: 'imported' }, { id: 'baseline' }, { id: 'module' }, { id: 'disabled' }] },
+  catalogEngineValues: () => new Map([['imported', 'y'], ['baseline', 'y'], ['module', 'm'], ['disabled', 'n']]),
+  curatedMenuOption: p => ({ symbol: p.id }), effectiveSelection: () => ({ all: [] }),
+};
+vm.createContext(enabledContext);
+vm.runInContext(extract(pluginController, 'effectiveEnabledPlugins'), enabledContext);
+assert.deepEqual([...enabledContext.effectiveEnabledPlugins()].map(p => p.id), ['imported', 'baseline', 'module']);
+assert.match(pluginController, /updateStats\(\);\s*\/\/ Restoring intent[\s\S]*?openSelectedDrawer\(\);/,
+  'restoring a default-Y selection must redraw, not remove a still-enabled plugin');
+assert.match(read('site/wrt/lib/config/config-importer.js'), /ensureCatalogPackageSizes\(catalogPackageSizesStatus\.state === 'error'\)/,
+  'imports retry a prior failed observation without blocking on optional data');
 
 const sourceJson = JSON.parse(read('tools/i18n-source.json'));
 const translationJson = JSON.parse(read('tools/i18n-translations.json'));
-for (const key of ['size.summary.unknown', 'size.summary.withUnknown']) {
+for (const key of ['size.summary.unknown', 'size.summary.withUnknown', 'size.summary.loading',
+  'size.summary.error', 'size.summary.retry', 'size.summary.noSelectedCoverage', 'bar.selectionSummary', 'drawer.effective', 'drawer.edit']) {
   assert.equal(typeof sourceJson.strings?.[key], 'string', `${key} must exist in the English source catalog`);
   assert.equal(typeof translationJson['zh-CN']?.[key], 'string', `${key} must exist in the Chinese translation catalog`);
 }

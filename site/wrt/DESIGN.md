@@ -157,6 +157,10 @@ browser zoom.
   installed-package occupancy only when every final-Y observation exists.
   Partial coverage must not produce a capacity percentage. Unknown-size columns
   disappear, but selected plugins and removal controls stay available.
+- The selection counter distinguishes effective applications from explicit
+  selections. Size loading, unavailable coverage and failures have visible
+  states; retry is a standard action-bar button. Narrow bars wrap readable
+  labels while keeping load/submit actions reachable.
 - Use `:focus-visible`, keyboard Escape handling supplied by the runtime,
   focus restoration, readable labels, and reduced-motion behavior.
 - Maintain readable contrast in both themes and under increased contrast mode.

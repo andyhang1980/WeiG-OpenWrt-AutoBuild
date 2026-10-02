@@ -981,6 +981,11 @@ async function importConfigFile(file) {
     if (seq !== configImportSeq) return;
     await operation.checkpoint(t('busy.processing'));
     await restoreSelections(state.importedConfig, payload, operation);
+    // Optional observations must not block importing an otherwise valid
+    // configuration. A new import may retry a prior failed size request once.
+    void ensureCatalogPackageSizes(catalogPackageSizesStatus.state === 'error');
+    importLogStep('package-sizes-after-import', { ...catalogPackageSizesStatus,
+      assetRef: MENU_INDEX?.assetRef || '' });
     finishImportLog('success');
     showToast(legacyJsonRecovered
       ? t('runtime.8527b3686481')
