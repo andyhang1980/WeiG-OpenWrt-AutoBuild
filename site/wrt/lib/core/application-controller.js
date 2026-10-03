@@ -156,10 +156,8 @@ async function init() {
     MENU_CATALOG_BINDING = state.catalogBindings?.[MENU_CATALOG_DATA_REF] || null;
     CATALOG_LOADER = CATALOG_LOADER_MODULE.createCatalogLoader({
       repository: MENU_CATALOG_REPO,
-      releaseTag: PROJECT?.catalogReleaseTag || 'menuconfig-catalog-complete',
       dataRef: MENU_CATALOG_DATA_REF,
       expectedBinding: MENU_CATALOG_BINDING,
-      allowReleaseFallback: MENU_CATALOG_DATA_REF === 'catalog-main',
       engine: CATALOG_ENGINE,
     });
     TIMEZONES = await loadJson('timezones.json');

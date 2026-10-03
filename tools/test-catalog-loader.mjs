@@ -198,7 +198,7 @@ const bindingHeadSha = gitBlobSha1(bindingIndexText);
 const freshnessMatchCalls = [];
 const freshnessMatchLoader = createCatalogLoader({
   repository: 'owner/catalog', dataRef: 'catalog-main', expectedBinding: binding,
-  allowReleaseFallback: false, engine: { createCatalogModel }, cacheStorage: fakeCaches(),
+  engine: { createCatalogModel }, cacheStorage: fakeCaches(),
   subtle: globalThis.crypto?.subtle,
   fetchImpl: async (url, options = {}) => {
     freshnessMatchCalls.push({ url, options });
@@ -228,7 +228,7 @@ const staleBindingText = JSON.stringify(staleBindingIndex);
 const staleBindingCalls = [];
 const staleBindingLoader = createCatalogLoader({
   repository: 'owner/catalog', dataRef: 'catalog-main', expectedBinding: binding,
-  allowReleaseFallback: false, engine: { createCatalogModel }, cacheStorage: fakeCaches(),
+  engine: { createCatalogModel }, cacheStorage: fakeCaches(),
   subtle: globalThis.crypto?.subtle,
   fetchImpl: async (url, options = {}) => {
     staleBindingCalls.push({ url, options });
@@ -254,7 +254,7 @@ assert(staleBindingCalls.filter((call) => call.url.includes('index.json')).map((
 const staleHeadCalls = [];
 const staleHeadLoader = createCatalogLoader({
   repository: 'owner/catalog', dataRef: 'catalog-main', expectedBinding: binding,
-  allowReleaseFallback: false, engine: { createCatalogModel }, cacheStorage: fakeCaches(),
+  engine: { createCatalogModel }, cacheStorage: fakeCaches(),
   subtle: globalThis.crypto?.subtle,
   fetchImpl: async (url, options = {}) => {
     staleHeadCalls.push({ url, options });
@@ -283,7 +283,7 @@ assert(staleHeadCalls.some((call) => call.options.method === 'HEAD') &&
 const headUnavailableRawCalls = [];
 const headUnavailableRawLoader = createCatalogLoader({
   repository: 'owner/catalog', dataRef: 'catalog-main', expectedBinding: binding,
-  allowReleaseFallback: false, engine: { createCatalogModel }, cacheStorage: fakeCaches(),
+  engine: { createCatalogModel }, cacheStorage: fakeCaches(),
   subtle: globalThis.crypto?.subtle,
   fetchImpl: async (url, options = {}) => {
     headUnavailableRawCalls.push({ url, options });
@@ -312,7 +312,7 @@ assert(headUnavailableRawCalls.some((call) => call.url.includes('raw.githubuserc
 const headUnavailableAllCalls = [];
 const headUnavailableAllLoader = createCatalogLoader({
   repository: 'owner/catalog', dataRef: 'catalog-main', expectedBinding: binding,
-  allowReleaseFallback: false, engine: { createCatalogModel }, cacheStorage: fakeCaches(),
+  engine: { createCatalogModel }, cacheStorage: fakeCaches(),
   subtle: globalThis.crypto?.subtle,
   fetchImpl: async (url, options = {}) => {
     headUnavailableAllCalls.push({ url, options });
@@ -390,8 +390,7 @@ const apiFetch = async (url, options = {}) => {
 const apiLoader = createCatalogLoader({
   repository: 'owner/catalog',
   dataRef: 'catalog-main',
-  allowReleaseFallback: false,
-  engine: { createCatalogModel },
+    engine: { createCatalogModel },
   fetchImpl: apiFetch,
   cacheStorage: fakeCaches(),
   subtle: null,
@@ -434,8 +433,7 @@ const freshCdnFetch = async (url, options = {}) => {
 const freshCdnLoader = createCatalogLoader({
   repository: 'owner/catalog',
   dataRef: 'catalog-main',
-  allowReleaseFallback: false,
-  engine: { createCatalogModel },
+    engine: { createCatalogModel },
   fetchImpl: freshCdnFetch,
   cacheStorage: fakeCaches(),
   subtle: null,
@@ -450,52 +448,30 @@ assert(freshCdnCalls.slice(0, 3).map((call) => new URL(call.url).hostname).join(
   'raw.githubusercontent.com,api.github.com,cdn.jsdelivr.net',
   'forced Catalog index fallback no longer runs Raw -> GitHub API -> jsDelivr');
 
-const releaseCalls = [];
-const releaseFetch = async (url) => {
-  releaseCalls.push(url);
-  if (url.includes('raw.githubusercontent.com') && url.includes('index.json')) {
-    return new Response('offline', { status: 503 });
-  }
-  if (url.includes('cdn.jsdelivr.net') && url.includes('index.json')) {
-    return new Response('offline', { status: 503 });
-  }
-  if (url.includes('api.github.com') && url.includes('index.json')) {
-    return new Response('offline', { status: 503 });
-  }
-  if (url.includes('/releases/download/menuconfig-catalog-complete/index.json')) {
-    return new Response(JSON.stringify(index), { status: 200 });
-  }
-  if ((url.includes('cdn.jsdelivr.net') || url.includes('raw.githubusercontent.com')) && url.includes(asset)) {
-    return new Response('offline', { status: 503 });
-  }
-  if (url.includes('/releases/download/menuconfig-catalog-complete/') && url.includes(asset)) {
-    return new Response(valid.bytes, { status: 200 });
-  }
-  return new Response('missing', { status: 404 });
-};
-const releaseLoader = createCatalogLoader({
+const transportFailureCalls = [];
+const transportFailureLoader = createCatalogLoader({
   repository: 'owner/catalog',
-  releaseTag: 'menuconfig-catalog-complete',
   engine: { createCatalogModel },
-  fetchImpl: releaseFetch,
+  fetchImpl: async (url) => {
+    transportFailureCalls.push(url);
+    return new Response('offline', { status: 503 });
+  },
   cacheStorage: fakeCaches(),
   subtle: null,
   now: () => 789,
 });
-const releaseFallback = await releaseLoader.fetchBundle({
-  sourceId: 'ImmortalWrt', branchName: 'openwrt-25.12', forceRefresh: true,
-});
-assert(releaseFallback.indexProvider === 'github-release',
-'index provider fallback did not reach the complete GitHub Release');
-assert(releaseFallback.provider === 'github-release',
-'asset provider fallback did not reach the complete GitHub Release');
-assert(releaseCalls.some((url) => url.includes('/releases/download/menuconfig-catalog-complete/index.json?wrt_refresh=789')),
-'GitHub Release index URL was not refresh-busted');
-assert(releaseFallback.diagnostics.filter((row) => row.stage === 'index' && !row.ok).length === 3,
-'GitHub Release index fallback diagnostics did not preserve all prior failures');
-assert(releaseCalls.slice(0, 4).map((url) => new URL(url).hostname).join(',') ===
-  'raw.githubusercontent.com,api.github.com,cdn.jsdelivr.net,github.com',
-  'forced production index fallback no longer keeps GitHub Release last');
+await assertRejects(
+  () => transportFailureLoader.fetchBundle({
+    sourceId: 'ImmortalWrt', branchName: 'openwrt-25.12', forceRefresh: true,
+  }),
+  /Catalog index unavailable/,
+  'three-provider Catalog transport must fail closed when every provider is unavailable',
+);
+assert(transportFailureCalls.map((url) => new URL(url).hostname).join(',') ===
+  'raw.githubusercontent.com,api.github.com,cdn.jsdelivr.net',
+  'forced Catalog index transport must remain Raw -> GitHub API -> jsDelivr');
+assert(transportFailureCalls.every((url) => !url.includes('/releases/' + 'download/')),
+  'Catalog loader must not reintroduce a GitHub Release transport');
 
 function deferred() {
   let resolve;
@@ -510,8 +486,7 @@ const raceCalls = [];
 const raceLoader = createCatalogLoader({
   repository: 'owner/catalog',
   dataRef: 'catalog-main',
-  allowReleaseFallback: false,
-  engine: { createCatalogModel },
+    engine: { createCatalogModel },
   cacheStorage: fakeCaches(),
   subtle: null,
   fetchImpl: async (url) => {

@@ -74,12 +74,6 @@ function safeRepository(value) {
   return repository;
 }
 
-function safeReleaseTag(value) {
-  const tag = String(value || '').trim();
-  if (!/^[A-Za-z0-9._-]+$/.test(tag)) throw new Error(`invalid Catalog release tag: ${value}`);
-  return tag;
-}
-
 export function safeCatalogDataRef(value) {
   const ref = String(value || '').trim();
   if (!/^catalog-(?:fix-[A-Za-z0-9][A-Za-z0-9._-]{0,95}|dev|staging|main)$/.test(ref)) {
@@ -153,9 +147,8 @@ function exactAssetRef(index) {
   return ref;
 }
 
-function providers(repository, releaseTag, dataRef) {
+function providers(repository, dataRef) {
   const repo = safeRepository(repository);
-  const defaultReleaseTag = safeReleaseTag(releaseTag);
   const branch = safeCatalogDataRef(dataRef);
   return {
     'github-raw': {
@@ -174,14 +167,6 @@ function providers(repository, releaseTag, dataRef) {
       indexHeadUrl: () => `https://api.github.com/repos/${repo}/contents/index.json?ref=${branch}`,
       indexUrl: () => `https://api.github.com/repos/${repo}/contents/index.json?ref=${branch}`,
       assetUrl: (asset, ref) => `https://api.github.com/repos/${repo}/contents/${asset}?ref=${ref}`,
-    },
-    'github-release': {
-      id: 'github-release',
-      indexUrl: (nonce) => `https://github.com/${repo}/releases/download/${defaultReleaseTag}/index.json?wrt_refresh=${nonce}`,
-      assetUrl: (asset, _ref, index) => {
-        const tag = safeReleaseTag(index?.completeReleaseTag || defaultReleaseTag);
-        return `https://github.com/${repo}/releases/download/${tag}/${asset}`;
-      },
     },
   };
 }
@@ -477,10 +462,8 @@ export function formatCatalogDiagnostics(diagnostics = []) {
 
 export function createCatalogLoader({
   repository,
-  releaseTag = 'menuconfig-catalog-complete',
   dataRef = 'catalog-main',
   expectedBinding = null,
-  allowReleaseFallback = dataRef === 'catalog-main',
   engine,
   fetchImpl = globalThis.fetch,
   cacheStorage = globalThis.caches,
@@ -490,17 +473,10 @@ export function createCatalogLoader({
 } = {}) {
   const exactDataRef = safeCatalogDataRef(dataRef);
   const binding = normalizeExpectedBinding(expectedBinding, exactDataRef, repository);
-  const providerMap = providers(repository, releaseTag, exactDataRef);
-  const indexProviderOrder = (forceRefresh = false) => {
-    if (forceRefresh) {
-      return allowReleaseFallback
-        ? ['github-raw', 'github-api', 'jsdelivr', 'github-release']
-        : ['github-raw', 'github-api', 'jsdelivr'];
-    }
-    return allowReleaseFallback
-      ? ['jsdelivr', 'github-raw', 'github-api', 'github-release']
-      : ['jsdelivr', 'github-raw', 'github-api'];
-  };
+  const providerMap = providers(repository, exactDataRef);
+  const indexProviderOrder = (forceRefresh = false) => forceRefresh
+    ? ['github-raw', 'github-api', 'jsdelivr']
+    : ['jsdelivr', 'github-raw', 'github-api'];
   let lastIndexResult = null;
   let indexPromise = null;
   const compatibilityMemory = new Map();
@@ -614,10 +590,8 @@ export function createCatalogLoader({
     })).catch(() => {});
   }
 
-  function assetProviderOrder(preferredAssetProvider = '', includeRelease = allowReleaseFallback) {
-    const order = includeRelease
-      ? ['jsdelivr', 'github-raw', 'github-api', 'github-release']
-      : ['jsdelivr', 'github-raw', 'github-api'];
+  function assetProviderOrder(preferredAssetProvider = '') {
+    const order = ['jsdelivr', 'github-raw', 'github-api'];
     if (order.includes(preferredAssetProvider)) {
       order.splice(order.indexOf(preferredAssetProvider), 1);
       order.unshift(preferredAssetProvider);
@@ -634,7 +608,6 @@ export function createCatalogLoader({
     preferredAssetProvider = '',
     forceRefresh = false,
     stage = 'asset',
-    includeRelease = allowReleaseFallback,
   }) {
     const safeAsset = safeCatalogAsset(asset);
     if (!forceRefresh) {
@@ -650,7 +623,7 @@ export function createCatalogLoader({
     }
     const ref = exactAssetRef(index);
     const errors = [];
-    for (const id of assetProviderOrder(preferredAssetProvider, includeRelease)) {
+    for (const id of assetProviderOrder(preferredAssetProvider)) {
       const provider = providerMap[id];
       const url = provider.assetUrl(safeAsset, ref, index);
       try {
@@ -877,7 +850,6 @@ export function createCatalogLoader({
         // the verified Cache API entry and never downloads the same evidence twice.
         forceRefresh: false,
         stage: 'compatibility',
-        includeRelease: false,
       });
       const compatibility = validateCompatibilityDocument(result.data, contract);
       const loaded = {
@@ -911,7 +883,7 @@ export function createCatalogLoader({
       const result = await fetchAssetDocument({
         asset: contract.asset, contract, index: indexResult.index, signal, diagnostics,
         preferredAssetProvider: indexResult.provider, forceRefresh: false,
-        stage: 'applications', includeRelease: false,
+        stage: 'applications',
       });
       const applications = validateApplicationsDocument(result.data, contract);
       const loaded = {

@@ -12,7 +12,7 @@ export const SITE_CONFIG_SCHEMA = 1;
 const SITE_TOP_LEVEL_KEYS = ['project', 'catalog', 'ui', 'firmware', 'build'];
 const PROJECT_REQUIRED_KEYS = ['displayName', 'shortName', 'repository', 'blogUrl'];
 const PROJECT_KEYS = [...PROJECT_REQUIRED_KEYS, 'guideUrl'];
-const CATALOG_KEYS = ['repository', 'releaseTag', 'selection', 'loading'];
+const CATALOG_KEYS = ['repository', 'selection', 'loading'];
 const SELECTION_KEYS = ['sourcePriority', 'defaultSource', 'developmentBranches', 'preferredTarget'];
 const TARGET_KEYS = ['selectors'];
 const SELECTOR_KEYS = ['system', 'subtarget', 'profile'];
@@ -147,7 +147,6 @@ function validateCatalog(value, errors) {
   if (!isRecord(value)) { errors.push(`${path}: must be an object`); return; }
   addUnknownAndMissing(value, path, CATALOG_KEYS, errors);
   validateRepository(value.repository, `${path}.repository`, errors);
-  stringError(value.releaseTag, `${path}.releaseTag`, errors, { pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/ });
 
   const selection = value.selection;
   if (!isRecord(selection)) errors.push(`${path}.selection: must be an object`);
@@ -290,7 +289,6 @@ export function siteRuntimeConfig(value) {
     catalogRepository: site.catalog.repository,
     catalogUrl,
     blogUrl: site.project.blogUrl,
-    catalogReleaseTag: site.catalog.releaseTag,
     catalogSelectionPolicy: clone(site.catalog.selection),
     catalogLoadPolicy: clone(site.catalog.loading),
     links: {

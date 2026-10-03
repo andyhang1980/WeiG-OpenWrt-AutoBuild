@@ -65,14 +65,10 @@
     "catalog": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repository", "releaseTag", "selection", "loading"],
+      "required": ["repository", "selection", "loading"],
       "properties": {
         "repository": {
           "$ref": "#/$defs/repository"
-        },
-        "releaseTag": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
         },
         "selection": {
           "type": "object",

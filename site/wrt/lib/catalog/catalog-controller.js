@@ -618,7 +618,7 @@ function classifyCatalogLoadFailure(errorText = '', diagnostics = [], online = t
   }
   if (/\bHTTP 429\b/i.test(combined)) return { kind: 'rate-limit', showGithubStatus: true };
   if (/\bHTTP 5\d\d\b/i.test(combined)) return { kind: 'remote-service', showGithubStatus: true };
-  const remoteProviders = new Set(['jsdelivr', 'github-raw', 'github-api', 'github-release']);
+  const remoteProviders = new Set(['jsdelivr', 'github-raw', 'github-api']);
   const remoteFailures = failedRows.filter((row) => remoteProviders.has(String(row.provider || '')));
   if ((remoteFailures.length && remoteFailures.every((row) => /Failed to fetch|NetworkError|Load failed/i.test(String(row.detail || '')))) ||
       (!remoteFailures.length && /Failed to fetch|NetworkError|Load failed/i.test(combined))) {

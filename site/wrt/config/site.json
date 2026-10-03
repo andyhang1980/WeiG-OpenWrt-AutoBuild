@@ -8,7 +8,6 @@
   },
   "catalog": {
     "repository": "weigefenxiang/WeiG-OpenWrt-Menuconfig-Catalog",
-    "releaseTag": "menuconfig-catalog-complete",
     "selection": {
       "sourcePriority": [
         "ImmortalWrt",
