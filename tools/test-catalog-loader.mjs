@@ -651,6 +651,82 @@ assert(compactBundle.model.relationsSchema === 5 && compactBundle.model.relation
   compactBundle.model.packageClosureComplete && splitCalls.some((url) => url.includes(splitAssets.graphCompact.asset)) &&
   !splitCalls.some((url) => url.includes(splitAssets.graph.asset)),
   'optional schema-5 graph must be preferred without losing independent completeness contracts');
+const coreDownloads = () => splitCalls.filter((url) => url.includes(splitAssets.core.asset)).length;
+const coreBefore = coreDownloads();
+const reusedCore = await splitLoader.fetchCore({ sourceId: 'ImmortalWrt', branchName: 'openwrt-25.12' });
+assert(reusedCore.data.schema === 6 && coreDownloads() === coreBefore,
+  'bundle and core-only requests must reuse one verified decoded core');
+
+splitDocuments.profileBaselines = compressedDocument({ schema: 3, kind: 'profile-baselines' });
+splitAssets.profileBaselines = { asset: 'immortalwrt--openwrt-25.12.profiles.json.gz',
+  bytes: splitDocuments.profileBaselines.bytes.length, hash: splitDocuments.profileBaselines.hash };
+const phases = [];
+let finishGraph;
+let baselineRequested = false;
+let publication = structuredClone(splitIndex);
+const phaseLoader = createCatalogLoader({ repository: 'owner/catalog', engine: { createCatalogModel },
+  cacheStorage: fakeCaches(), subtle: null,
+  fetchImpl: async (url) => {
+    if (url.includes('index.json')) return new Response(JSON.stringify(publication));
+    for (const [logical, contract] of Object.entries(splitAssets)) {
+      if (!url.includes(contract.asset)) continue;
+      phases.push(logical);
+      if (logical === 'graphCompact') await new Promise((resolve) => { finishGraph = resolve; });
+      if (logical === 'profileBaselines') { baselineRequested = true; finishGraph?.(); }
+      return new Response(splitDocuments[logical].bytes);
+    }
+    return new Response('unexpected', { status: 404 });
+  },
+});
+const phaseRequest = phaseLoader.fetchBundle({ sourceId: 'ImmortalWrt', branchName: 'openwrt-25.12',
+  includeProfileBaselines: true,
+  onCore: async (core) => {
+    assert(core.branch.commit === splitCommit && core.data.schema === 6,
+      'early core must be verified against the exact branch identity');
+    assert(!phases.includes('graphCompact') && !phases.includes('profileBaselines'),
+      'runtime download must wait until core/Profile callback completes');
+    phases.push('profile-selected');
+  },
+});
+const phaseTimeout = setTimeout(() => finishGraph?.(), 1500);
+const phased = await phaseRequest;
+clearTimeout(phaseTimeout);
+assert(baselineRequested && phases.indexOf('profile-selected') < phases.indexOf('graphCompact'),
+  'core selection and graph/baseline overlap must be preserved');
+const phaseCount = phases.length;
+assert((await phased.loadShard('profileBaselines')).kind === 'profile-baselines' && phases.length === phaseCount,
+  'preloaded native baseline may not download/decode twice');
+await Promise.all([phased.loadShard('menu'), phased.loadShard('menu')]);
+assert(phases.filter((item) => item === 'menu').length === 1, 'concurrent lazy shard requests must deduplicate');
+publication.assetRef = 'b'.repeat(40);
+await phaseLoader.fetchIndex({ forceRefresh: true });
+const freshContext = await phaseLoader.fetchCore({ sourceId: 'ImmortalWrt', branchName: 'openwrt-25.12' });
+assert(freshContext.index.assetRef === publication.assetRef && phases.filter((item) => item === 'core').length === 1,
+  'unchanged core hash may be reused, but snapshot metadata must never be stale');
+const cancelled = new AbortController();
+const beforeCancel = phases.length;
+await assertRejects(() => phaseLoader.fetchBundle({ sourceId: 'ImmortalWrt', branchName: 'openwrt-25.12',
+  signal: cancelled.signal, includeProfileBaselines: true,
+  onCore: () => cancelled.abort(),
+}), /abort/i, 'aborted early selection must never assemble a runtime');
+assert(phases.length === beforeCancel, 'cancelled core phase must not start graph/baseline downloads');
+let finishOldIndex;
+const oldSelection = new AbortController(), nextSelection = new AbortController();
+let indexFetches = 0;
+const isolatedIndex = createCatalogLoader({ repository: 'owner/catalog', engine: { createCatalogModel },
+  cacheStorage: fakeCaches(), subtle: null, fetchImpl: async () => {
+    indexFetches++;
+    if (indexFetches === 1) await new Promise((resolve) => { finishOldIndex = resolve; });
+    return new Response(JSON.stringify(publication));
+  },
+});
+const oldIndexRequest = isolatedIndex.fetchIndex({ signal: oldSelection.signal });
+oldSelection.abort();
+const freshIndexRequest = await isolatedIndex.fetchIndex({ signal: nextSelection.signal });
+finishOldIndex();
+await assertRejects(() => oldIndexRequest, /abort/i, 'old index response must respect cancellation even if transport ignores it');
+assert(indexFetches === 2 && freshIndexRequest.index.assetRef === publication.assetRef,
+  'a new selection must not inherit the old index promise or cancellation signal');
 await splitLoader.clearCache();
 splitDocuments.graphCompact = compressedDocument({ invalid: true });
 await assertRejects(() => splitLoader.fetchBundle({ sourceId: 'ImmortalWrt', branchName: 'openwrt-25.12' }),

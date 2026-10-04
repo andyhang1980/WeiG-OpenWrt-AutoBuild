@@ -51,6 +51,7 @@ node tools/dev-assistant.mjs prepare
 | `site/wrt/config/site.json` → `project` | `displayName`, `shortName`, repository, and blog URL | Presentation and link targets only; gateway identity, the `[build]` protocol, and Run/Artifact title formats stay unchanged |
 | `site/wrt/config/site.json` → `catalog` | Catalog repository, release tag, Source/Branch preference, preferred Target selector, and loading queue | Catalog remains authoritative for Source, Branch, Target/Profile, packages, Kconfig, and compatibility facts; no inventory is maintained here |
 | `site/wrt/config/site.json` → `ui` | Default language and color mode | Controls only the initial web appearance |
+| `site/wrt/config/site.json` → `ui.applicationCountAdvisory` | Optional additional-application warning thresholds (defaults: above 6/10) | Nonblocking advice, not a size estimate or build gate; exclude Native builtins, M and automatic dependencies |
 | `site/wrt/config/site.json` → `firmware` | LAN address, timezone, theme, NTP, and package mirror | Public firmware defaults only; sensitive values never belong here |
 | `site/wrt/config/site.json` → `build` | Default build tag `defaultTag` | Supplies a web default only and cannot bypass request validation |
 | `config/build.json` → `password` | `mode`: `prompt`, `empty`, or `secret` | Read by the build side only; not a web setting |

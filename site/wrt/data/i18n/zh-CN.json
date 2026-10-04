@@ -588,6 +588,8 @@
   "catalog.branchFresh": "Fresh · {count} options{commit}",
   "catalog.unknown": "unknown",
   "catalog.loading": "Loading catalog…",
+  "bar.addedApplications": "新增 {n} 个软件 · 空间风险",
+  "bar.applicationCountRisk": "软件数量仅为风险提示，不代表容量计算；不计内置应用、自动依赖和 M 软件包。新增软件较多可能超出 RootFS，导致构建失败；目标支持时可增大 RootFS 分区，否则请减少软件。此提示不阻止提交。",
   "import.leaveWorkspaceConfirm": "切换 Target 会退出上传配置工作区，并改为网页新建配置。继续吗？"
  }
 }

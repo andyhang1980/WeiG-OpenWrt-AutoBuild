@@ -235,8 +235,8 @@ export function orderCatalogIndex(index, policy = {}) {
   const branchCompare = (left, right) => {
     const leftName = String(left?.branch || left?.id || '');
     const rightName = String(right?.branch || right?.id || '');
-    const leftVersion = stableVersion(leftName);
-    const rightVersion = stableVersion(rightName);
+    const leftVersion = stableVersion(left?.version) || stableVersion(leftName);
+    const rightVersion = stableVersion(right?.version) || stableVersion(rightName);
     if (leftVersion && rightVersion) {
       for (let index = 0; index < Math.max(leftVersion.length, rightVersion.length); index++) {
         const difference = (rightVersion[index] || 0) - (leftVersion[index] || 0);

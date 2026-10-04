@@ -1,5 +1,12 @@
 # Developer Guide
 
+## Version families, staged loading and application-count advice
+
+- Catalog owns Source/Branch discovery. `versionFamily` declares the prefix, numeric component count and width; patch/experimental branches are excluded. Numeric `version` sorting and upstream `defaultBranch` selection are independent, without browser Source-name exceptions.
+- Validate index/core and establish Target/Profile first; paint selectors while keeping loading status. Fetch graph and Native Profile baselines in parallel from the same immutable manifest. Runtime editing/submission stays unavailable until ready; Source/Branch changes cancel old work. Reuse verified core data and shard promises, isolate cancellation signals, and reject stale model/baseline updates.
+- Optional `ui.applicationCountAdvisory` counts distinct concrete applications explicitly selected/imported as final Y above the Native baseline: 7–10 yellow and 11+ red by default. Exclude builtins, M and automatic dependencies. This is advice, not a size estimate or gate; never change RootFS automatically. Existing complete-size 50%/80% guidance, historical imports and old site configurations remain supported.
+- New sources require native Catalog generation and exact feeds/Profile/relations validation before promotion and web binding. No second Kconfig resolver or new Worker gate is introduced; local tests do not prove every firmware build succeeds.
+
 ## Recommendation identity, official sizes and submission layout
 
 - Equivalent plans retain all `resolvedPackages` so preferred cancellation identities survive deduplication. Reuse `deriveCompatibilityPlans` / `applyUserIntent` for simulation, application and verification; no hardcoded browser package rules.

@@ -1,5 +1,12 @@
 # 开发者指南
 
+## 版本族、选择器加载与数量提示
+
+- Source/Branch 事实由 Catalog 配置与发现模块维护；`versionFamily` 描述前缀、数字段数和宽度，排除补丁/实验分支。数值倒序使用分支 `version`，默认选择独立使用上游 `defaultBranch`，网页不按 Source 名称特判。
+- 先验证 index/core 并建立 Target/Profile，渲染选择器且保持加载提示；再并行获取同一 immutable manifest 的 graph 与 Native Profile baseline。运行数据未就绪时 Target 编辑与提交不可用，Source/Branch 可切换并取消旧任务。共享加载器复用已验证 core 和 shard Promise；取消信号互相隔离，旧响应不得覆盖新模型或 baseline。
+- `ui.applicationCountAdvisory` 是非阻断体验策略：相对原生 baseline 新增、用户显式选择或导入且最终为 Y 的真实应用去重统计，默认 7–10 黄、11 以上红；不计内置、M、自动依赖，不当作大小估计，不自动改 RootFS。完整安装大小可用时，原有 50%/80% 容量建议独立保留；历史导入与旧 site config 兼容。
+- 新源必须完成 Catalog 原生生成、exact feeds/Profile 和关系校验，才能晋级并绑定网页。增加 Source 不增加 Worker 门禁或另一套 Kconfig 算法；本地测试通过不等于任意固件编译成功。
+
 ## 推荐身份、官方大小观测与提交布局
 
 - 等价兼容性候选去重保留全部 `resolvedPackages`，避免首选取消身份丢失；共享 `deriveCompatibilityPlans` / `applyUserIntent` 模拟、应用、复验所有动作，不硬编码包名。

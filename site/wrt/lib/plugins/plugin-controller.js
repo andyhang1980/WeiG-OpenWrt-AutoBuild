@@ -370,6 +370,24 @@ function effectiveEnabledPlugins() {
   });
 }
 
+function applicationCountAdvisory() {
+  if (state.device?.id !== 'catalog-target' || !ACTIVE_PROFILE_BASELINE) return null;
+  const values = catalogEngineValues();
+  const added = new Set();
+  for (const plugin of PLUGINS.plugins) {
+    const option = curatedMenuOption(plugin);
+    const symbol = option?.symbol;
+    if (!symbol || values.get(symbol) !== 'y' || ACTIVE_PROFILE_BASELINE.values.get(symbol) === 'y') continue;
+    const requested = catalogUserOverrides.get(symbol) ?? menuImportedOriginal.get(symbol);
+    if (requested !== 'y') continue;
+    const record = catalogPackageRecordForSymbol(symbol);
+    if (record) added.add(record.package);
+  }
+  const policy = PROJECT?.customization?.ui?.applicationCountAdvisory || { warningAbove: 6, dangerAbove: 10 };
+  return { count: added.size, level: added.size > policy.dangerAbove ? 'danger'
+    : added.size > policy.warningAbove ? 'warning' : '' };
+}
+
 function updateLegend() {
   let ok = 0, builtin = 0, off = 0;
   for (const p of PLUGINS.plugins) {
@@ -545,6 +563,13 @@ function updateStats() {
   const n = effectiveEnabledPlugins().length;
   $('selCount').textContent = state.device?.id === 'catalog-target'
     ? t('bar.selectionSummary', { n, direct: sel.all.length }) : t('bar.selected', { n });
+  const applicationAdvisory = applicationCountAdvisory();
+  $('selCount').classList.toggle('capacity-warning', applicationAdvisory?.level === 'warning');
+  $('selCount').classList.toggle('capacity-danger', applicationAdvisory?.level === 'danger');
+  if (applicationAdvisory?.level) {
+    $('selCount').textContent += ' · ' + t('bar.addedApplications', { n: applicationAdvisory.count });
+    bindUiTooltipContent($('selCount'), { body: t('bar.applicationCountRisk') });
+  } else bindUiTooltipContent($('selCount'), { body: t('bar.selected.title') });
   const rootfs = rootfsPartitionInfo();
   const packageSizes = packageSizeEstimate();
   const sizeState = state.device?.id === 'catalog-target' ? catalogPackageSizesStatus.state : 'unavailable';

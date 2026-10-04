@@ -479,6 +479,8 @@ export function createCatalogLoader({
     : ['jsdelivr', 'github-raw', 'github-api'];
   let lastIndexResult = null;
   let indexPromise = null;
+  let indexPromiseSignal = null;
+  let indexGeneration = 0;
   const compatibilityMemory = new Map();
   const compatibilityPromises = new Map();
   const applicationsMemory = new Map();
@@ -487,8 +489,14 @@ export function createCatalogLoader({
   const corePromises = new Map();
 
   async function fetchIndex({ signal, forceRefresh = false, diagnostics = [] } = {}) {
-    if (!forceRefresh && indexPromise) return indexPromise;
+    signal?.throwIfAborted();
+    if (!forceRefresh && indexPromise && indexPromiseSignal === signal) return indexPromise;
     if (!forceRefresh && lastIndexResult) return { ...lastIndexResult, diagnostics };
+    const generation = ++indexGeneration;
+    const remember = (result) => {
+      signal?.throwIfAborted();
+      if (generation === indexGeneration) lastIndexResult = result;
+    };
     const run = async () => {
       const errors = [];
       let unverifiedJsdelivr = null;
@@ -537,7 +545,7 @@ export function createCatalogLoader({
               continue;
             }
           }
-          lastIndexResult = result;
+          remember(result);
           diagnostic(diagnostics, 'index', id, true,
             `schema ${index.schema}; assetRef ${index.assetRef.slice(0, 8)}`, url);
           return { ...result, diagnostics };
@@ -548,7 +556,7 @@ export function createCatalogLoader({
         }
       }
       if (unverifiedJsdelivr) {
-        lastIndexResult = unverifiedJsdelivr;
+        remember(unverifiedJsdelivr);
         diagnostic(diagnostics, 'index', 'jsdelivr', true,
           `freshness unverified; use snapshot ${unverifiedJsdelivr.index.assetRef.slice(0, 8)}`, unverifiedJsdelivr.url);
         return { ...unverifiedJsdelivr, diagnostics, freshnessVerified: false };
@@ -556,9 +564,10 @@ export function createCatalogLoader({
       throw loaderError(`Catalog index unavailable\n${errors.join('\n')}`, diagnostics);
     };
     const promise = run().finally(() => {
-      if (indexPromise === promise) indexPromise = null;
+      if (indexPromise === promise) { indexPromise = null; indexPromiseSignal = null; }
     });
     indexPromise = promise;
+    indexPromiseSignal = signal;
     return promise;
   }
 
@@ -676,15 +685,28 @@ export function createCatalogLoader({
       };
     }
 
-    const key = `${sourceId}\0${branchName}\0${String(coreContract.hash || coreContract.asset)}`;
+    return loadCoreDocument({ source, branch, indexResult, signal, forceRefresh, preferredAssetProvider, diagnostics });
+  }
+
+  async function loadCoreDocument({ source, branch, indexResult, signal, forceRefresh, preferredAssetProvider, diagnostics }) {
+    signal?.throwIfAborted();
+    const index = indexResult.index;
+    const coreContract = branch.assets.core;
+    const key = `${source.id}\0${branch.branch}\0${branch.commit || ''}\0${String(coreContract.hash || coreContract.asset)}`;
+    const context = { index, indexProvider: indexResult.provider, branch, source, legacyBundle: false, diagnostics };
     if (!forceRefresh && coreMemory.has(key)) {
       const loaded = coreMemory.get(key);
       diagnostic(diagnostics, 'core-memory', 'memory', true, `schema ${loaded.data?.schema || '-'}`, key);
-      return { ...loaded, diagnostics };
+      return { ...loaded, ...context };
     }
-    if (!forceRefresh && corePromises.has(key)) return corePromises.get(key);
+    const pending = corePromises.get(key);
+    // Independent selections must not inherit another request's cancellation.
+    if (!forceRefresh && pending && pending.signal === signal && !signal?.aborted) {
+      return { ...await pending.promise, ...context };
+    }
 
-    const run = (async () => {
+    const entry = { signal, promise: null };
+    entry.promise = (async () => {
       const result = await fetchAssetDocument({
         asset: coreContract.asset,
         contract: coreContract,
@@ -703,21 +725,19 @@ export function createCatalogLoader({
       if (expectedCommit && actualCommit !== expectedCommit) {
         throw loaderError(`Catalog source commit mismatch: ${actualCommit || '(missing)'} != ${expectedCommit}`, diagnostics);
       }
+      signal?.throwIfAborted();
       const loaded = {
         data: result.data,
-        index,
-        indexProvider: indexResult.provider,
         provider: result.provider,
-        branch,
-        source,
         url: result.url,
-        legacyBundle: false,
       };
       coreMemory.set(key, loaded);
-      return { ...loaded, diagnostics };
-    })().finally(() => corePromises.delete(key));
-    corePromises.set(key, run);
-    return run;
+      return loaded;
+    })().finally(() => {
+      if (corePromises.get(key) === entry) corePromises.delete(key);
+    });
+    corePromises.set(key, entry);
+    return { ...await entry.promise, ...context };
   }
 
   async function fetchBundle({
@@ -726,6 +746,8 @@ export function createCatalogLoader({
     signal,
     forceRefresh = false,
     preferredAssetProvider = '',
+    onCore = null,
+    includeProfileBaselines = false,
   } = {}) {
     const diagnostics = [];
     const indexResult = await fetchIndex({ signal, forceRefresh, diagnostics });
@@ -735,20 +757,29 @@ export function createCatalogLoader({
       throw loaderError(`Catalog branch unavailable: ${sourceId}/${branchName}`, diagnostics);
     }
 
-    const split = branch.assets?.core && branch.assets?.graph;
+    const split = branch.assets?.core && (branch.assets?.graphCompact || branch.assets?.graph);
     if (split) {
-      const coreContract = branch.assets.core;
       const graphContract = selectCatalogGraphContract(branch);
-      const [core, graph] = await Promise.all([
-        fetchAssetDocument({
-          asset: coreContract.asset, contract: coreContract, index, signal, diagnostics,
-          preferredAssetProvider, forceRefresh, stage: 'core',
-        }),
+      const core = await loadCoreDocument({ source, branch, indexResult, signal, forceRefresh, preferredAssetProvider, diagnostics });
+      // Establish the exact Profile from small, verified core facts before
+      // downloading the runtime. The callback may reject a stale selection.
+      if (onCore) await onCore(core);
+      signal?.throwIfAborted();
+      const baselineContract = branch.assets?.profileBaselines;
+      if (includeProfileBaselines && !baselineContract?.asset) {
+        throw loaderError('Catalog Native Profile baseline is unavailable', diagnostics);
+      }
+      const [graph, baseline] = await Promise.all([
         fetchAssetDocument({
           asset: graphContract.asset, contract: graphContract, index, signal, diagnostics,
           preferredAssetProvider, forceRefresh, stage: 'graph',
         }),
+        includeProfileBaselines ? fetchAssetDocument({
+          asset: baselineContract.asset, contract: baselineContract, index, signal, diagnostics,
+          preferredAssetProvider, forceRefresh, stage: 'shard:profileBaselines',
+        }) : null,
       ]);
+      signal?.throwIfAborted();
       if (Number(core.data?.schema || 0) < 6 || ![3, 4, 5].includes(Number(graph.data?.relations?.schema || 0))) {
         throw loaderError('Catalog split assets do not satisfy schema 6 / relations 3, 4, or 5', diagnostics);
       }
@@ -768,22 +799,35 @@ export function createCatalogLoader({
       };
       const model = engine.createCatalogModel(data);
       const loadedShards = new Map();
+      if (baseline) loadedShards.set('profileBaselines', baseline.data);
+      const shardPromises = new Map();
       const loadShard = async (logical, options = {}) => {
+        const shardSignal = options.signal || signal;
+        shardSignal?.throwIfAborted();
         if (loadedShards.has(logical) && !options.forceRefresh) return loadedShards.get(logical);
+        const pending = shardPromises.get(logical);
+        if (!options.forceRefresh && pending && pending.signal === shardSignal) return pending.promise;
         const contract = branch.assets?.[logical];
         if (!contract?.asset) throw new Error(`Catalog shard is unavailable: ${logical}`);
-        const result = await fetchAssetDocument({
+        const entry = { signal: shardSignal, promise: null };
+        entry.promise = fetchAssetDocument({
           asset: contract.asset,
           contract,
           index,
-          signal: options.signal || signal,
+          signal: shardSignal,
           diagnostics,
           preferredAssetProvider: options.preferredAssetProvider || preferredAssetProvider,
           forceRefresh: options.forceRefresh === true,
           stage: `shard:${logical}`,
+        }).then((result) => {
+          shardSignal?.throwIfAborted();
+          loadedShards.set(logical, result.data);
+          return result.data;
+        }).finally(() => {
+          if (shardPromises.get(logical) === entry) shardPromises.delete(logical);
         });
-        loadedShards.set(logical, result.data);
-        return result.data;
+        shardPromises.set(logical, entry);
+        return entry.promise;
       };
       return {
         data, model, index, indexProvider: indexResult.provider,
@@ -901,6 +945,8 @@ export function createCatalogLoader({
   async function clearCache() {
     lastIndexResult = null;
     indexPromise = null;
+    indexPromiseSignal = null;
+    indexGeneration++;
     compatibilityMemory.clear();
     compatibilityPromises.clear();
     applicationsMemory.clear();

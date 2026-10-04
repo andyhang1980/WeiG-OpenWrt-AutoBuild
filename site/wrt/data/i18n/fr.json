@@ -588,6 +588,8 @@
   "catalog.branchFresh": "Fresh · {count} options{commit}",
   "catalog.unknown": "unknown",
   "catalog.loading": "Loading catalog…",
+  "bar.addedApplications": "{n} added apps · space risk",
+  "bar.applicationCountRisk": "Application count is an advisory, not a size estimate. Built-in apps, automatic dependencies and M packages are excluded. Many added applications may cause a RootFS overflow and a failed build. Increase the RootFS partition if the target supports it, or reduce applications; this warning does not block submission.",
   "import.leaveWorkspaceConfirm": "Changing the Target exits the uploaded-configuration workspace and starts a new web configuration. Continue?"
  }
 }

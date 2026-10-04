@@ -12,6 +12,12 @@
 let activeUiOperation = null;
 const operationInertRoots = new Map();
 let operationStatus = null;
+function nextUiPaint() {
+  return new Promise((resolve) => {
+    const fallback = setTimeout(resolve, 50);
+    requestAnimationFrame(() => { clearTimeout(fallback); setTimeout(resolve, 0); });
+  });
+}
 for (const type of ['click', 'pointerdown', 'keydown', 'beforeinput', 'change']) {
   document.addEventListener(type, (event) => {
     if (!activeUiOperation || (activeUiOperation.interacting > 0 && event.target?.closest?.('#modal'))) return;
@@ -59,10 +65,7 @@ function createUiOperation(title) {
       if (activeUiOperation !== operation) throw new Error('Operation ownership changed');
       operation.message = nextTitle; syncUiOperation();
       // Yield a real frame, not merely another microtask on the blocked thread.
-      await new Promise((resolve) => {
-        const fallback = setTimeout(resolve, 50);
-        requestAnimationFrame(() => { clearTimeout(fallback); setTimeout(resolve, 0); });
-      });
+      await nextUiPaint();
     },
     close() {
       if (activeUiOperation !== operation) return;

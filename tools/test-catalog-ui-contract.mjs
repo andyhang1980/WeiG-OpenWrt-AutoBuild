@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 import { readFrontendRuntimeSource } from './lib/frontend-source.mjs';
 import {
   catalogFileNameTokenMatch,
@@ -30,6 +31,39 @@ const i18nEnglish = JSON.parse(readFileSync(join(root, 'site', 'wrt', 'data', 'i
 const i18nZhCn = JSON.parse(readFileSync(join(root, 'site', 'wrt', 'data', 'i18n', 'zh-CN.json'), 'utf8'));
 const i18nZhTw = JSON.parse(readFileSync(join(root, 'site', 'wrt', 'data', 'i18n', 'zh-TW.json'), 'utf8'));
 const expect = (condition, message) => { if (!condition) throw new Error(message); };
+const branchPreferenceSource = app.match(/function catalogBranchPreference\([^]*?\n\}/)?.[0];
+const branchControl = { dataset: { catalogSourceId: 'previous-source' }, value: '25.12' };
+const branchContext = { $: () => branchControl, state: { device: { id: 'catalog-target' }, source: { id: 'previous-source' }, version: { id: '25.12' } } };
+vm.createContext(branchContext); vm.runInContext(branchPreferenceSource, branchContext);
+const newSource = { id: 'new-source', defaultBranch: 'vendor-24.10', branches: [
+  { id: '25.12', branch: 'vendor-25.12' }, { id: '24.10', branch: 'vendor-24.10' },
+] };
+expect(branchContext.catalogBranchPreference(newSource, false) === '24.10',
+  'entering a new source must not borrow the previous source branch ID');
+branchControl.dataset.catalogSourceId = newSource.id;
+expect(branchContext.catalogBranchPreference(newSource, false) === '25.12',
+  'choosing another version must not be reset to upstream default on every render');
+expect(branchContext.catalogBranchPreference(newSource, false, { branchId: '24.10' }) === '24.10',
+  'explicit imported branch selection must take priority');
+const nativeBaselineSource = app.match(/async function ensureCatalogProfileBaselines\([^]*?\n\}/)?.[0];
+let finishBaselineA;
+const sourceA = { id: 'source' }, nativeBranch = { branch: 'stable', commit: 'a', assets: { profileBaselines: { asset: 'profiles' } } };
+const baselineContext = {
+  MENU_INDEX: { assetRef: 'revision' }, PROFILE_BASELINE_STORE: null, profileBaselineKey: '',
+  catalogProfileBaselineLoadingPromise: null, menuCatalogSeq: 1,
+  catalogShardLoader: () => new Promise(resolve => { finishBaselineA = resolve; }),
+  ensureProfileBaselineModule: async () => ({ createProfileBaselineStore: document => document }),
+};
+vm.createContext(baselineContext); vm.runInContext(nativeBaselineSource, baselineContext);
+const baselineA = baselineContext.ensureCatalogProfileBaselines(sourceA, nativeBranch);
+await Promise.resolve();
+baselineContext.menuCatalogSeq = 2;
+baselineContext.catalogShardLoader = async () => ({ identity: 'new-generation' });
+await baselineContext.ensureCatalogProfileBaselines(sourceA, nativeBranch);
+finishBaselineA({ identity: 'old-generation' });
+await baselineA;
+expect(baselineContext.PROFILE_BASELINE_STORE.identity === 'new-generation',
+  'same-key reload must isolate pending Native baseline promises and reject an old completion');
 
 expect(html.includes("if (meta && !releaseMeta) throw new Error('Site release metadata does not match its release pointer')"),
   'an invalid deployment identity can silently fall back to the main Catalog channel');
@@ -997,6 +1031,12 @@ expect(
   'plugin option cards lost their independent rounded boundary template');
 
 console.log('Catalog UI state and responsive DOM contracts passed');
+expect(app.includes('includeProfileBaselines: true') && app.includes('MENU_CATALOG = { ...core.data, coreOnly: true }') &&
+  app.includes('await nextUiPaint()') && app.includes('MENU_CATALOG.coreOnly'),
+  'verified core selectors must paint before the runtime and may not masquerade as a ready model');
+expect(app.includes('const shardLoader = catalogShardLoader') && app.includes('generation === menuCatalogSeq') &&
+  app.includes('shardLoader === catalogShardLoader'),
+  'Native baseline completion must use its captured loader and reject stale generations');
 
 expect(!app.includes('probe-request.json'), 'removed Probe request file protocol returned');
 expect(app.includes('WEIG_PACKAGE_PROBE_STATE_V2:') &&

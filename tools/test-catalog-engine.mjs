@@ -2787,6 +2787,14 @@ const defaultBranchOrder = orderCatalogIndex({ sources: [{ id: 'future', branche
 assert(defaultBranchOrder.map((row) => row.branch).join(',') ===
   'openwrt-26.12,openwrt-25.12,main,master,openwrt-27.01-rc1',
   'a future stable branch did not become the first default while prerelease stayed special');
+const vendorOrder = orderCatalogIndex({ sources: [{ id: 'new-source', defaultBranch: 'vendor-24.10', branches: [
+  { id: 'vendor-24.10', branch: 'vendor-24.10', version: '24.10' },
+  { id: 'vendor-30.01', branch: 'vendor-30.01', version: '30.01' },
+  { id: 'vendor-23.05', branch: 'vendor-23.05', version: '23.05' },
+] }] }).sources[0];
+assert(vendorOrder.branches.map(row => row.id).join(',') === 'vendor-30.01,vendor-24.10,vendor-23.05',
+  'vendor version metadata must share numeric stable sorting');
+assert(vendorOrder.defaultBranch === 'vendor-24.10', 'sorting must preserve the upstream default independently');
 const targetTree = {
   targetSelectors: [{ id: 'family' }, { id: 'board' }, { id: 'profile' }],
   targetTree: [{ value: 'first', children: [{ value: 'fallback', children: [{ value: 'base' }] }] },

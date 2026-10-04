@@ -82,8 +82,11 @@ assert.equal(runtimeSite.links.catalog, 'https://github.com/weigefenxiang/WeiG-O
 assert.equal(runtimeSite.links.blog, sourceSite.project.blogUrl);
 assert.equal(runtimeSite.links.guide, sourceSite.project.guideUrl);
 const legacySite = clone(sourceSite);
+delete legacySite.ui.applicationCountAdvisory;
 delete legacySite.project.guideUrl;
 assert.equal(isValidSiteConfig(legacySite), true, 'the additive guide URL must not invalidate old site configs');
+assert.equal(isValidSiteConfig(mutate(sourceSite, ['ui', 'applicationCountAdvisory'], { warningAbove: 6, dangerAbove: 6 })), false,
+  'the advisory thresholds must be ordered');
 assert.equal(siteRuntimeConfig(legacySite).links.guide,
   `${runtimeSite.links.repository}#fork-自建`, 'old site configs retain their repository guide');
 assert.equal(siteRuntimeConfig(mutate(sourceSite, ['project', 'guideUrl'], '')).links.guide,

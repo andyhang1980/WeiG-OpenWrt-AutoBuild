@@ -17,7 +17,8 @@ const SELECTION_KEYS = ['sourcePriority', 'defaultSource', 'developmentBranches'
 const TARGET_KEYS = ['selectors'];
 const SELECTOR_KEYS = ['system', 'subtarget', 'profile'];
 const LOADING_KEYS = ['startup', 'idle', 'startupConcurrency', 'idleConcurrency', 'idleDelayMs'];
-const UI_KEYS = ['defaultLanguage', 'colorMode'];
+const UI_REQUIRED_KEYS = ['defaultLanguage', 'colorMode'];
+const UI_KEYS = [...UI_REQUIRED_KEYS, 'applicationCountAdvisory'];
 const FIRMWARE_KEYS = ['lanIp', 'timezone', 'theme', 'ntp', 'packageMirror'];
 const TIMEZONE_KEYS = ['zonename', 'timezone'];
 const NTP_KEYS = ['preset', 'servers'];
@@ -194,9 +195,20 @@ function validateCatalog(value, errors) {
 function validateUi(value, errors) {
   const path = 'site.ui';
   if (!isRecord(value)) { errors.push(`${path}: must be an object`); return; }
-  addUnknownAndMissing(value, path, UI_KEYS, errors);
+  addUnknownAndMissing(value, path, UI_KEYS, errors, UI_REQUIRED_KEYS);
   enumError(value.defaultLanguage, `${path}.defaultLanguage`, errors, LANGUAGES);
   enumError(value.colorMode, `${path}.colorMode`, errors, COLOR_MODES);
+  if (Object.hasOwn(value, 'applicationCountAdvisory')) {
+    const advisory = value.applicationCountAdvisory;
+    const advisoryPath = `${path}.applicationCountAdvisory`;
+    if (!isRecord(advisory)) errors.push(`${advisoryPath}: must be an object`);
+    else {
+      addUnknownAndMissing(advisory, advisoryPath, ['warningAbove', 'dangerAbove'], errors);
+      numberError(advisory.warningAbove, `${advisoryPath}.warningAbove`, errors, 0, 10000);
+      numberError(advisory.dangerAbove, `${advisoryPath}.dangerAbove`, errors, 1, 10000);
+      if (advisory.dangerAbove <= advisory.warningAbove) errors.push(`${advisoryPath}: dangerAbove must exceed warningAbove`);
+    }
+  }
 }
 
 function validateFirmware(value, errors) {

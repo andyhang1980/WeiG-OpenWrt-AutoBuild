@@ -170,6 +170,16 @@
         },
         "colorMode": {
           "enum": ["auto", "light", "dark"]
+        },
+        "applicationCountAdvisory": {
+          "description": "Optional non-blocking count policy for additional final-Y applications, not a capacity estimate.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["warningAbove", "dangerAbove"],
+          "properties": {
+            "warningAbove": { "type": "integer", "minimum": 0, "maximum": 10000 },
+            "dangerAbove": { "type": "integer", "minimum": 1, "maximum": 10000 }
+          }
         }
       }
     },
