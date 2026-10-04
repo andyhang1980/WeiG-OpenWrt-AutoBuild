@@ -199,6 +199,8 @@
   "lanip.invalid": "后台地址需为内网 IPv4(如 192.168.1.1),已重置为默认",
   "login.info": "登录信息:用户名 root · 密码:{pw}",
   "login.pw.none": "无(首次登录请立即设置)",
+  "login.pw.native": "源码/Profile 默认（请查看该源说明）",
+  "login.pw.set": "已设置临时密码（刷机后请立即修改）",
   "login.pw.password": "初始密码 password(登录后请修改)",
   "rootpw.label": "初始密码(可选,留空 = 该源默认)",
   "rootpw.public": "⚠️ 提交内容公开可见,密码公开！！",

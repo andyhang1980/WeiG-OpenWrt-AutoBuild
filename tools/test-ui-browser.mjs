@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { request as httpRequest } from 'node:http';
 import { connect, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
@@ -1205,7 +1205,9 @@ async function main() {
   console.log(`[ui-browser] all ${THEMES.length * VIEWPORTS.length} viewport/theme scenarios passed`);
 }
 
-main().catch((error) => {
+export { CdpConnection, evaluateFunction, findChrome, httpJson, launchChrome, startPreview, waitFor };
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) main().catch((error) => {
   console.error(`[ui-browser] ${error.stack || error.message}`);
   process.exitCode = 1;
 });

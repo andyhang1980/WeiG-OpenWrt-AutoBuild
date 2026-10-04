@@ -374,9 +374,11 @@ jobs:
 
       - name: DIY script P2 (default settings) / DIY 脚本 P2(默认设置)
         env:
+          WRT_LAN_IP: ${{ steps.req.outputs.lanip }}
           WRT_ZONENAME: ${{ steps.req.outputs.zonename }}
           WRT_TIMEZONE: ${{ steps.req.outputs.timezone }}
           WRT_THEME: ${{ steps.req.outputs.theme }}
+          WRT_THEME_MODE: ${{ steps.req.outputs.theme_mode }}
           WRT_NTP_1: ${{ steps.req.outputs.ntp_1 }}
           WRT_NTP_2: ${{ steps.req.outputs.ntp_2 }}
           WRT_NTP_3: ${{ steps.req.outputs.ntp_3 }}
@@ -387,14 +389,6 @@ jobs:
         run: |
           cd openwrt
           "$GITHUB_WORKSPACE/Shell/${{ steps.req.outputs.diy2 }}"
-
-      - name: Set custom LAN IP / 自定义后台登录地址
-        if: steps.req.outputs.lanip != '192.168.1.1'
-        run: |
-          cd openwrt
-          # diy2 已把各源默认地址统一为 192.168.1.1,这里再改成用户选的 / diy2 normalized every source to 192.168.1.1 first, now switch to the user's choice
-          sed -i 's/192\.168\.1\.1/${{ steps.req.outputs.lanip }}/g' package/base-files/files/bin/config_generate
-          grep -n '${{ steps.req.outputs.lanip }}' package/base-files/files/bin/config_generate | head -3
 
       - name: Set initial root password / 设置初始密码(uci-defaults,首次开机生效)
         if: steps.req.outputs.rootpw != '' || steps.req.outputs.password_mode == 'empty' || steps.req.outputs.password_mode == 'secret'
@@ -517,6 +511,7 @@ jobs:
           WRT_WORKSPACE: ${{ github.workspace }}
           WRT_PACKAGE_MIRROR_ID: ${{ steps.req.outputs.package_mirror_id }}
           WRT_SOURCE_ID: ${{ steps.req.outputs.source }}
+          WRT_THEME_MODE: ${{ steps.req.outputs.theme_mode }}
           WRT_BRANCH: ${{ steps.req.outputs.branch }}
           WRT_ZONENAME: ${{ steps.req.outputs.zonename }}
           WRT_TIMEZONE: ${{ steps.req.outputs.timezone }}
@@ -545,8 +540,7 @@ jobs:
           set -euo pipefail
           INFO="openwrt/files/etc/weig-build-info"
           test -s "$INFO"
-          test -s "openwrt/files/etc/uci-defaults/10-weig-system" || \
-            test -s "openwrt/files/etc/uci-defaults/10-weig-timezone"
+          test -s "openwrt/files/etc/uci-defaults/zzzz-weig-system"
           grep -Fx "zonename=$EXPECTED_ZONENAME" "$INFO"
           grep -Fx "timezone=$EXPECTED_TIMEZONE" "$INFO"
           grep -Fx "theme=$EXPECTED_THEME" "$INFO"

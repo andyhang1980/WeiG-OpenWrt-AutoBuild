@@ -169,6 +169,7 @@ function resolveConfigTheme(text) {
 function configFirmwareSettings(text) {
   const match = String(text).match(/^# firmware-settings: .* theme=([^\s]+) ntp=/m);
   return { timezone: state.timezone, theme: match?.[1] || resolveConfigTheme(text),
+    themeMode: state.theme === '@base' ? 'inherit' : 'explicit',
     ntp: state.ntp, packageMirror: state.packageMirror };
 }
 

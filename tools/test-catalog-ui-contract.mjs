@@ -945,6 +945,23 @@ expect(mirrorLoader.includes('if (!packageMirrorsPromise)') &&
   'package mirror loading does not share one promise/cache loader');
 
 const mirrorIds = ['anonymous-upstream', 'anonymous-automatic', 'anonymous-manual'];
+const mirrorContext = vm.createContext({ state: {}, PACKAGE_MIRRORS: JSON.parse(readFileSync(
+  join(root, 'site/wrt/data/package-mirrors.json'), 'utf8')) });
+for (const name of ['mirrorPreset', 'packageMirrorAvailable']) {
+  const definition = app.match(new RegExp(`function ${name}\\([^]*?\\n\\}`))?.[0];
+  expect(Boolean(definition), `${name} function missing`);
+  vm.runInContext(definition, mirrorContext);
+}
+for (const source of ['OpenWrt', 'ImmortalWrt', 'lede', 'hanwckf', 'iStoreOS', 'Lienol', 'future-source']) {
+  expect(mirrorContext.packageMirrorAvailable('source-default', source) &&
+    mirrorContext.packageMirrorAvailable('official', source), `default mirror must be available for ${source}`);
+}
+expect(!mirrorContext.packageMirrorAvailable('ustc', 'future-source'),
+  'unknown source must not advertise a guessed manual mirror');
+expect(app.indexOf("const mb = document.createDocumentFragment();") <
+  app.indexOf("$('modalBody').replaceChildren(mb);"), 'submit must construct content before showing it');
+expect(app.includes("['ntp', Boolean($('ntpBox')?.selectedOptions?.[0]?.value)]") &&
+  app.includes("['package-mirror', Boolean("), 'submit readiness must cover all firmware dropdowns');
 const mirrorSelection = (overrides = {}) => resolvePackageMirrorSelection({
   timezone: 'Region/Local',
   availableIds: mirrorIds,

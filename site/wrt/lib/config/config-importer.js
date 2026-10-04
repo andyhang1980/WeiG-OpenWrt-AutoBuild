@@ -735,7 +735,7 @@ async function restoreSelections(config, payload, operation = null) {
       TIMEZONES.zones.find((item) => item.timezone === fw.timezone);
     if (zone) state.timezone = zone.zonename;
     if (/^luci-theme-[A-Za-z0-9._+-]+$/.test(String(fw.theme || '')) &&
-        menuOptionBySymbol.has(`PACKAGE_${fw.theme}`)) state.theme = fw.theme;
+        menuOptionBySymbol.has(`PACKAGE_${fw.theme}`)) state.theme = fw.themeMode === 'inherit' ? '@base' : fw.theme;
     if (NTP_PRESETS[fw.ntp]) state.ntp = fw.ntp;
     const importedMirror = fw.packageMirror || fw.opkg;
     if (packageMirrorAvailable(importedMirror, state.source?.id)) {
@@ -744,6 +744,7 @@ async function restoreSelections(config, payload, operation = null) {
     }
   }
   renderFirmwareSettings();
+  updateLoginInfo();
   renderGroups();
   applyMenuconfigExpandedState(true);
   resetMenuNavigation();

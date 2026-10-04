@@ -167,6 +167,8 @@
   "lanip.invalid": "La dirección del panel debe ser una IPv4 privada (p. ej. 192.168.1.1); se restableció el valor predeterminado",
   "login.info": "Datos de acceso: usuario root · contraseña: {pw}",
   "login.pw.none": "ninguna (configúrala de inmediato en el primer inicio de sesión)",
+  "login.pw.native": "source/Profile default (check the source documentation)",
+  "login.pw.set": "custom password configured (change it after flashing)",
   "login.pw.password": "contraseña inicial password (cámbiala tras iniciar sesión)",
   "rootpw.label": "Contraseña inicial (opcional; vacío = valor predeterminado de la fuente)",
   "rootpw.hint": "Contraseña temporal; cámbiala inmediatamente después de flashear. (Usa @empty con lede para borrarla.)",

@@ -119,6 +119,16 @@ Edit only `tools/i18n-source.json` and `tools/i18n-translations.json` for web tr
 
 ## 2. Data loading
 
+### Firmware settings and submission
+
+Every valid Catalog Source supports `source-default`; other mirror presets require a declared family with matching roots. Unmapped sources preserve upstream/custom `VERSION_REPO`, without guessing a brand's repository. Browser projection and request parsing share the canonical mirror policy.
+
+Submission checks theme, NTP and mirror selectors, constructs the entire three-row confirmation before showing it, and uses the existing schema-6 Native-baseline/override serializer. After download, open the corresponding GitHub editor, retaining current-page fallback when popups are blocked. Failures show an error, without leaving a blank tab. Opening the editor is not creating an Issue.
+
+All P2 adapters reuse `Shell/diy2-generic.sh`. Its `zzzz-weig-system` UCI overlay follows the audited numeric/zzz native defaults. LAN changes only ipaddr, retaining topology, protocol, netmask and IPv6. No theme Makefile or `config_generate` edits remain. Optional `firmware.themeMode=inherit` preserves the native runtime theme; `explicit` applies the selected one. Old requests without that field retain explicit-theme semantics. Blank passwords under prompt policy preserve native credentials; unknown native defaults are not advertised as empty.
+
+Integration diagnostic: `node tools/test-submit-browser.mjs`. It reuses the CDP driver with a local preview and real Catalog, downloads JSON/.config, re-imports, opens the correct GitHub editor and checks requests with the real parser. Chrome and network are required; no Issue/workflow/firmware build is created. The script prints its evidence directory.
+
 `site/wrt/config/site.json` is the public web configuration source; its `catalog.loading` object is the existing loading-scheduling contract. `config/build.json` is the build-side configuration source and must not be read by the browser:
 
 ```json

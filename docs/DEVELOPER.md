@@ -99,6 +99,16 @@ node tools/prepare-web-deployment.mjs --commit <40位SHA> --branch <dev或main>
 
 ## 2. 数据加载
 
+### 固件设置与提交
+
+`source-default` 是所有有效 Catalog Source 的安全镜像选项；其他预设只向策略已声明且具有对应 roots 的源开放。新源没有镜像 family 时不猜测仓库，保留源码及自定义 `VERSION_REPO`。网页与请求 parser 消费同一个镜像策略及其生成投影。
+
+提交前检查主题、NTP、镜像选择器；先完整构造摘要和三行操作，再显示弹窗。请求下载沿用现有 schema 6 / Native baseline+overrides；下载完成后打开对应 GitHub 编辑器，弹窗被阻挡时沿用当前页跳转；异步失败显示错误，不创建空白标签页或 Issue。
+
+所有 P2 源适配器复用 `Shell/diy2-generic.sh`，只生成 `zzzz-weig-system` UCI 覆盖，在已审计的原生 numeric/zzz defaults 后应用 LAN、时区、NTP。只改 LAN ipaddr，保留接口、协议、掩码和 IPv6；不再修改主题 Makefile 或 `config_generate`。可选 `firmware.themeMode=inherit` 保留原生运行时主题，`explicit` 应用选定主题；旧 JSON 无该字段沿用显式主题语义。prompt 策略下空密码不改原生密码，UI 未知默认不等同无密码。
+
+专项集成检查：`node tools/test-submit-browser.mjs`，复用现有 CDP 驱动，使用真实 Catalog 和本地预览，实际下载 JSON/.config、重新导入、打开对应 GitHub 编辑器并由真实 parser 校验请求。需要网络和 Chrome，不发布 Issue，不触发云编译；证据路径由脚本输出。
+
 `site/wrt/config/site.json` 是公开网页配置源；其中 `catalog.loading` 是既有加载调度 contract。`config/build.json` 是构建端配置源，浏览器不得读取：
 
 ```json

@@ -167,6 +167,8 @@
   "lanip.invalid": "L'adresse d'administration doit être une IPv4 privée (ex. 192.168.1.1) ; valeur par défaut rétablie",
   "login.info": "Identifiants : utilisateur root · mot de passe : {pw}",
   "login.pw.none": "aucun (définissez-le dès la première connexion)",
+  "login.pw.native": "source/Profile default (check the source documentation)",
+  "login.pw.set": "custom password configured (change it after flashing)",
   "login.pw.password": "mot de passe initial password (changez-le après connexion)",
   "rootpw.label": "Mot de passe initial (facultatif, vide = défaut de la source)",
   "rootpw.hint": "Mot de passe temporaire ; changez-le immédiatement après le flashage. (Avec lede, @empty le supprime.)",

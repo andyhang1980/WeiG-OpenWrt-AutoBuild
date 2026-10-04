@@ -190,6 +190,18 @@ try {
     assert(report.effective === 'ustc' && report.packageManagers.join(',') === 'apk', JSON.stringify(report));
   });
 
+  await run('Any Catalog source can preserve default/custom repositories without a declared family', async () => {
+    for (const source of ['iStoreOS', 'Lienol', 'future-source']) {
+      const root = fixture(`native-${source}`, { origin: 'https://vendor.example.test/packages' });
+      const before = read(root, 'include/version.mk');
+      const report = await applyPackageMirror({ root, rules, source, requested: 'source-default' });
+      assert(report.effective === 'source-default' && report.changedFiles.length === 0, JSON.stringify(report));
+      assert(read(root, 'include/version.mk') === before, 'unknown source defaults must not be guessed');
+      const auto = await applyPackageMirror({ root, rules, source, requested: 'auto',
+        probeCandidate: () => { throw Error('unmapped source must not probe guessed mirrors'); } });
+      assert(auto.effective === 'source-default', JSON.stringify(auto));
+    }
+  });
   console.log(`package mirror matrix: ${passed} scenarios passed`);
 } catch (error) {
   console.error(`package mirror matrix failed: ${error.message}`);

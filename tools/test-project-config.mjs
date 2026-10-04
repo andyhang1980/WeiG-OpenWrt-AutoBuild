@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import {
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -252,6 +253,51 @@ try {
   assert.equal(sourced.status, 0, sourced.stderr || sourced.stdout);
   assert.equal(sourced.stdout, shellSpecialTag,
     'Bash must recover defaultTag values containing shell punctuation exactly');
+
+  // Exercise actual generated firstboot shell after representative native
+  // defaults. Mock only UCI storage, not the P2 script or its execution order.
+  for (const zone of authorities.timezoneRows) {
+    for (const value of [zone.zonename, zone.timezone]) assert.match(value, /^[A-Za-z0-9_./:+,<>-]+$/,
+      'every canonical timezone must be supported by the shared P2 shell');
+  }
+  for (const adapter of ['generic', 'openwrt', 'lede', '360T7']) {
+    for (const mode of ['inherit', 'explicit']) {
+      const tree = join(tempRoot, `${adapter}-${mode}`); mkdirSync(tree);
+      const overlay = spawnSync('bash', [join(ROOT, 'Shell', `diy2-${adapter}.sh`)], {
+        cwd: tree, encoding: 'utf8', env: { ...process.env,
+          WRT_LAN_IP: '10.20.30.1', WRT_ZONENAME: 'Asia/Singapore', WRT_TIMEZONE: 'SGT-8',
+          WRT_THEME: 'luci-theme-openwrt-2020', WRT_THEME_MODE: mode,
+          WRT_NTP_1: 'one.example', WRT_NTP_2: 'two.example', WRT_NTP_3: 'three.example', WRT_NTP_4: 'four.example' },
+      });
+      assert.equal(overlay.status, 0, overlay.stderr);
+      const defaults = join(tree, 'files/etc/uci-defaults');
+      const native = `#!/bin/sh\nuci -q set network.lan.ipaddr=172.16.1.1\nuci -q set network.lan.proto=static\nuci -q set network.lan.netmask=255.255.255.0\nuci -q set network.lan.device=br-lan\nuci -q set network.lan.ip6assign=60\nuci -q set system.@system[0].timezone=CST-8\nuci -q set luci.main.mediaurlbase=/luci-static/native\nexit 0\n`;
+      for (const name of ['99-default-settings', '99_theme', 'zzz-native-settings']) writeFileSync(join(defaults, name), native);
+      const executed = spawnSync('bash', ['-c',
+        'uci() { [ "$1" != "-q" ] || shift; printf "%s\\t%s\\n" "$1" "$2"; }; export -f uci; cd "$1"; for file in *; do bash "$file" || exit; done',
+        'firstboot-test', defaults], { cwd: tree, encoding: 'utf8' });
+      assert.equal(executed.status, 0, executed.stderr);
+      const values = new Map();
+      for (const line of executed.stdout.trim().split(/\r?\n/)) {
+        const [command, expression = ''] = line.split('\t');
+        const equals = expression.indexOf('=');
+        const key = equals < 0 ? expression : expression.slice(0, equals);
+        const value = expression.slice(equals + 1);
+        if (command === 'set') values.set(key, value);
+        if (command === 'delete') values.delete(key);
+        if (command === 'add_list') values.set(key, [...(values.get(key) || []), value]);
+      }
+      assert.equal(values.get('network.lan.ipaddr'), '10.20.30.1');
+      for (const [key, value] of [['proto', 'static'], ['netmask', '255.255.255.0'], ['device', 'br-lan'], ['ip6assign', '60']]) {
+        assert.equal(values.get(`network.lan.${key}`), value, 'changing LAN IP must preserve native network topology');
+      }
+      assert.equal(values.get('system.@system[0].timezone'), 'SGT-8');
+      assert.equal(values.get('system.@system[0].zonename'), 'Asia/Singapore');
+      assert.deepEqual(values.get('system.ntp.server'), ['one.example', 'two.example', 'three.example', 'four.example']);
+      assert.equal(values.get('luci.main.mediaurlbase'), mode === 'inherit' ? '/luci-static/native' : '/luci-static/openwrt2020');
+      assert.doesNotMatch(readFileSync(join(ROOT, 'Shell', 'diy2-generic.sh'), 'utf8'), /sed -i|feeds\/luci|config_generate/);
+    }
+  }
 
   writeFileSync(shellOutput, readFileSync(shellOutput, 'utf8').replace('WRT_THEME:=luci-theme-argon', 'WRT_THEME:=drifted'), 'utf8');
   assert.equal(runGenerator(...common, '--check').status, 1, 'Shell drift must fail --check');

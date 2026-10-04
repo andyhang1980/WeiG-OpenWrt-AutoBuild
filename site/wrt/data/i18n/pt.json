@@ -167,6 +167,8 @@
   "lanip.invalid": "O endereço do painel precisa ser um IPv4 de rede interna (ex.: 192.168.1.1); voltou ao padrão",
   "login.info": "Dados de login: usuário root · senha: {pw}",
   "login.pw.none": "nenhuma (defina uma logo no primeiro login)",
+  "login.pw.native": "source/Profile default (check the source documentation)",
+  "login.pw.set": "custom password configured (change it after flashing)",
   "login.pw.password": "senha inicial password (altere depois de entrar)",
   "rootpw.label": "Senha inicial (opcional; em branco = padrão da fonte)",
   "rootpw.hint": "Senha temporária; altere-a imediatamente após gravar. (Use @empty com lede para limpar a senha.)",

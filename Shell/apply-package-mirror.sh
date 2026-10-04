@@ -68,6 +68,7 @@ const lines = [
   `zonename=${value('WRT_ZONENAME', 'Asia/Shanghai')}`,
   `timezone=${value('WRT_TIMEZONE', 'CST-8')}`,
   `theme=${value('WRT_THEME', 'luci-theme-bootstrap')}`,
+  `theme_mode=${value('WRT_THEME_MODE', 'explicit')}`,
   `ntp=${value('WRT_NTP_ID', 'cn')}`,
   `ntp_servers=${[1, 2, 3, 4].map((index) => value(`WRT_NTP_${index}`)).filter(Boolean).join(' ')}`,
   `package_mirror_requested=${report.requested}`,

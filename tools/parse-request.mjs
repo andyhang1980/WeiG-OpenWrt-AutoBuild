@@ -391,6 +391,9 @@ writeFileSync(String(process.env.REQUEST_OVERRIDES_OUT || 'request-overrides.jso
   JSON.stringify({ schema: 1, overrides: rawOverrides }, null, 2) + '\n', 'utf8');
 
 const fw = req.firmware && typeof req.firmware === 'object' && !Array.isArray(req.firmware) ? req.firmware : {};
+// Old requests carried a concrete theme only; preserve their explicit intent.
+const themeMode = own(fw, 'themeMode') ? fw.themeMode : 'explicit';
+if (!['inherit', 'explicit'].includes(themeMode)) fail('Firmware theme mode is invalid');
 const themeSymbolRe = /^PACKAGE_(luci-theme-[A-Za-z0-9._+-]{1,48})$/;
   const enabledBaselineThemes = [...baseline.values]
   .filter(([symbol, value]) => themeSymbolRe.test(String(symbol)) && value !== 'n' && value !== '')
@@ -534,7 +537,7 @@ const requestedMirrorId = String(PACKAGE_MIRROR_RULES.aliases?.[requestedMirrorI
 const mirrorPreset = (PACKAGE_MIRROR_RULES.presets || []).find((preset) => preset.id === requestedMirrorId);
 if (!mirrorPreset) fail(`Unknown package mirror preset: ${requestedMirrorInput}`);
 const sourceFamily = String(PACKAGE_MIRROR_RULES.sourceFamilies?.[source.id] || '');
-if (!sourceFamily) fail(`No source is registered for the package mirror: ${source.id}`);
+if (!sourceFamily && mirrorPreset.kind !== 'default') fail(`No source is registered for the package mirror: ${source.id}`);
 if (mirrorPreset.kind === 'mirror' && !mirrorPreset.roots?.[sourceFamily]) {
   fail(`${source.id} does not accept the selected package mirror preset: ${requestedMirrorInput}`);
 }
@@ -577,6 +580,7 @@ const out = [
   `zonename=${zonename}`,
   `timezone=${timezone}`,
   `theme=${theme}`,
+  `theme_mode=${themeMode}`,
   `ntp_id=${ntpId}`,
   `ntp_1=${ntpServers[0]}`,
   `ntp_2=${ntpServers[1]}`,

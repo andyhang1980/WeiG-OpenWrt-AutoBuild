@@ -166,6 +166,8 @@
   "lanip.invalid": "The admin address must be a private IPv4 (e.g. 192.168.1.1); reset to default",
   "login.info": "Login: username root · password: {pw}",
   "login.pw.none": "none (set one right after first login)",
+  "login.pw.native": "source/Profile default (check the source documentation)",
+  "login.pw.set": "custom password configured (change it after flashing)",
   "login.pw.password": "initial password is 'password' (change it after login)",
   "rootpw.label": "Initial password (optional, empty = source default)",
   "rootpw.hint": "Temporary login password; change it immediately after flashing. (Use @empty with lede to clear the default password.)",

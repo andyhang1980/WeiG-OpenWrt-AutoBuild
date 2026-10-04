@@ -167,6 +167,8 @@
   "lanip.invalid": "관리 주소는 내부망 IPv4여야 해요(예: 192.168.1.1). 기본값으로 되돌렸어요",
   "login.info": "로그인 정보: 사용자명 root · 비밀번호: {pw}",
   "login.pw.none": "없음(첫 로그인 때 바로 설정해 주세요)",
+  "login.pw.native": "source/Profile default (check the source documentation)",
+  "login.pw.set": "custom password configured (change it after flashing)",
   "login.pw.password": "초기 비밀번호 password(로그인 후 변경해 주세요)",
   "rootpw.label": "초기 비밀번호(선택, 빈칸 = 소스 기본값)",
   "rootpw.hint": "임시 로그인 비밀번호입니다. 플래싱 후 즉시 변경하세요. (lede에서는 @empty로 비울 수 있습니다.)",

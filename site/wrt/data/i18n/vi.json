@@ -167,6 +167,8 @@
   "lanip.invalid": "Địa chỉ quản trị phải là IPv4 nội bộ (ví dụ 192.168.1.1), đã đặt lại về mặc định",
   "login.info": "Thông tin đăng nhập: tên người dùng root · mật khẩu: {pw}",
   "login.pw.none": "không có (hãy đặt ngay khi đăng nhập lần đầu)",
+  "login.pw.native": "source/Profile default (check the source documentation)",
+  "login.pw.set": "custom password configured (change it after flashing)",
   "login.pw.password": "mật khẩu ban đầu là password (hãy đổi sau khi đăng nhập)",
   "rootpw.label": "Mật khẩu ban đầu (tùy chọn, để trống = mặc định của nguồn)",
   "rootpw.hint": "Mật khẩu đăng nhập tạm thời; đổi ngay sau khi nạp. (Dùng @empty với lede để xóa mật khẩu.)",
