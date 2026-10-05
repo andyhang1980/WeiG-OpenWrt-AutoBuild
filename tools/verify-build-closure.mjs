@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Verify package-caused compatibility rules against the exact upstream package
-// graph that the Custom Build worker is about to compile.  Catalog supplies the
-// reviewed failure package; upstream metadata supplies the package graph.  This
-// tool deliberately has no package-name knowledge and never edits .config.
+// Offline diagnostic replay against captured upstream package metadata.
+// This tool is not an admission gate and must not be called by firmware
+// Workers. Catalog supplies reviewed facts; captured native Make metadata
+// explains a failed build without editing or approving its configuration.
 
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';

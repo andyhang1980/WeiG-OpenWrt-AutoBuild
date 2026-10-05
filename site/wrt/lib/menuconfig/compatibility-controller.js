@@ -283,6 +283,7 @@ function configurationPreflightEvaluation() {
   const plan = CATALOG_ENGINE.deriveConfigurationRepairPlan(
     CATALOG_MODEL, context.values, {
       dependencySymbols: catalogDependencySymbols,
+      derivedSymbols: catalogConditionalDefaultSymbols,
       protectedSymbols: catalogProtectedSymbols(),
       preferredValues: catalogPreferredValues(),
       explicitSymbols: catalogUserOverrides.keys(),
@@ -789,6 +790,7 @@ async function ensureCompatibilityRules() {
         dependencySymbols: catalogDependencySymbols,
         protectedSymbols: catalogProtectedSymbols(),
         preferredValues: catalogPreferredValues(),
+        derivedSymbols: catalogConditionalDefaultSymbols,
         explicitSymbols: new Set(catalogUserOverrides.keys()),
         validationOptions: evaluation.context.validationOptions,
       },

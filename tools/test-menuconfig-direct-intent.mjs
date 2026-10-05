@@ -172,4 +172,101 @@ assert(CATALOG_ENGINE.parseConfigDocument(runtime.buildFinalConfigText()).get('C
 assert(runtime.configurationPreflightEvaluation().initialViolations.length === 0,
   'a repeated check resurrected the repaired native-baseline value');
 
-console.log('menuconfig prerequisite direct-Intent replay passed');
+// Exercise actual UI provenance across transactions for every Kconfig type.
+const installedRows = ['minimal', 'complete', 'consumer'].map(packageName => ({
+  kind: 'package', package: packageName, configSymbol: `PACKAGE_${packageName}`,
+  kconfigSymbol: `PACKAGE_${packageName}`, type: 'bool', states: ['n', 'y'], canDisable: true,
+  kconfig: packageName === 'consumer' ? { selectsExpressions: [['PACKAGE_complete']] } : {},
+  packageInfo: { installation: { apk: { name: packageName,
+    provides: packageName === 'consumer' ? [] : ['implementation'] } }, depends: [] },
+}));
+runtime.CATALOG_MODEL = CATALOG_ENGINE.createCatalogModel({ schema: 5, relations: { schema: 2,
+  records: installedRows, indexes: {},
+  packageInstallation: { schema: 1, kind: 'openwrt-apk-provides-v1', configSymbol: 'USE_APK' } } });
+runtime.menuOptionBySymbol = new Map(installedRows.map(row => [row.configSymbol, { ...row, symbol: row.configSymbol }]));
+runtime.menuSearchOptions = [...runtime.menuOptionBySymbol.values()];
+runtime.ACTIVE_PROFILE_BASELINE = { values: new Map([['USE_APK', 'y'], ['PACKAGE_minimal', 'y']]) };
+runtime.menuValues = new Map([['USE_APK', 'y'], ['PACKAGE_minimal', 'y'], ['PACKAGE_complete', 'y'], ['PACKAGE_consumer', 'y']]);
+runtime.catalogBaselineValues = new Map(runtime.ACTIVE_PROFILE_BASELINE.values);
+for (const collection of [runtime.menuTouched, runtime.catalogConditionalDefaultSymbols,
+  runtime.catalogDependencySymbols, runtime.catalogUserOverrides, runtime.catalogImportedSymbols,
+  runtime.catalogRecommendedValues, runtime.menuImportedOriginal]) collection.clear();
+runtime.menuTouched.add('PACKAGE_complete'); runtime.menuTouched.add('PACKAGE_consumer');
+runtime.catalogUserOverrides.set('PACKAGE_complete', 'y'); runtime.catalogUserOverrides.set('PACKAGE_consumer', 'y');
+runtime.markCatalogStateChanged();
+const providerEvaluation = runtime.configurationPreflightEvaluation();
+assert(providerEvaluation.actions.some(action => action.symbol === 'PACKAGE_minimal'),
+  'APK provider recommendation points to the wrong participant');
+runtime.applyConfigurationRecommendation(providerEvaluation);
+assert(runtime.menuValues.get('PACKAGE_minimal') === 'n' && runtime.menuValues.get('PACKAGE_complete') === 'y' &&
+  runtime.configurationPreflightEvaluation().initialViolations.length === 0,
+  'actual recommendation replay failed or resurrected the incompatible native provider');
+
+const defaultRows = [
+  { configSymbol: 'OWNER', kconfigSymbol: 'OWNER', type: 'bool', states: ['n', 'y'] },
+  ...[['bool', 'y'], ['tristate', 'y'], ['string', '"native value"'], ['int', '512'], ['hex', '0x20']]
+    .map(([type, value]) => ({ configSymbol: `DEFAULT_${type}`, kconfigSymbol: `DEFAULT_${type}`,
+      type, states: type === 'tristate' ? ['n', 'm', 'y'] : type === 'bool' ? ['n', 'y'] : [],
+      defaults: [value], kconfig: { dependsExpressions: [['OWNER']] } })),
+];
+runtime.CATALOG_MODEL = CATALOG_ENGINE.createCatalogModel({ schema: 5, targets: [],
+  relations: { schema: 2, records: defaultRows, indexes: {} } });
+runtime.menuOptionBySymbol = new Map(defaultRows.map(row => [row.configSymbol,
+  { ...row, symbol: row.configSymbol, userSettable: true }]));
+runtime.menuValues = new Map([['OWNER', 'n']]);
+runtime.catalogBaselineValues = new Map([['OWNER', 'n']]);
+runtime.ACTIVE_PROFILE_BASELINE = { values: new Map([['OWNER', 'n']]) };
+for (const collection of [runtime.menuTouched, runtime.catalogConditionalDefaultSymbols,
+  runtime.catalogDependencySymbols, runtime.catalogUserOverrides, runtime.catalogImportedSymbols,
+  runtime.catalogRecommendedValues, runtime.menuImportedOriginal]) collection.clear();
+runtime.markCatalogStateChanged();
+const owner = runtime.menuOptionBySymbol.get('OWNER');
+for (let cycle = 0; cycle < 3; cycle++) {
+  runtime.applyCatalogIntent(owner, 'y');
+  for (const [type, expected] of [['bool', 'y'], ['tristate', 'y'], ['string', 'native value'], ['int', '512'], ['hex', '0x20']]) {
+    assert(runtime.menuValues.get(`DEFAULT_${type}`) === expected, `lost ${type} default at cycle ${cycle}`);
+    assert(!runtime.catalogUserOverrides.has(`DEFAULT_${type}`) && !runtime.menuTouched.has(`DEFAULT_${type}`),
+      `automatic ${type} default became a user assignment`);
+  }
+  runtime.applyCatalogIntent(owner, 'n');
+  assert(runtime.menuValues.get('DEFAULT_bool') === 'n' && !runtime.menuValues.has('DEFAULT_string'),
+    `inactive defaults must follow native boolean/scalar omission semantics: ${JSON.stringify([...runtime.menuValues])}`);
+  assert(runtime.catalogConditionalDefaultSymbols.has('DEFAULT_bool') && !runtime.menuTouched.has('DEFAULT_bool'),
+    'inactive N lost its default ownership');
+}
+runtime.applyCatalogIntent(owner, 'y');
+runtime.applyCatalogIntent(runtime.menuOptionBySymbol.get('DEFAULT_bool'), 'n');
+runtime.applyCatalogIntent(runtime.menuOptionBySymbol.get('DEFAULT_string'), 'custom value');
+assert(runtime.catalogUserOverrides.get('DEFAULT_bool') === 'n',
+  'an explicit N equal to the inactive baseline must not be treated as restore');
+runtime.applyCatalogIntent(owner, 'n');
+runtime.applyCatalogIntent(owner, 'y');
+assert(runtime.menuValues.get('DEFAULT_bool') === 'n' && runtime.menuValues.get('DEFAULT_string') === 'custom value',
+  'default recomputation overwrote explicit boolean/scalar intent');
+
+const choiceRows = [
+  { configSymbol: 'CHOICE_OWNER', type: 'bool', states: ['n', 'y'] },
+  ...['CHOICE_FIRST', 'CHOICE_SECOND'].map(configSymbol => ({ configSymbol, type: 'bool',
+    states: ['n', 'y'], choice: 'NATIVE_CHOICE', kconfig: { dependsExpressions: [['CHOICE_OWNER']] } })),
+];
+runtime.CATALOG_MODEL = CATALOG_ENGINE.createCatalogModel({ schema: 5, targets: [], relations: {
+  schema: 2, records: choiceRows, indexes: {}, choices: [{ id: 'NATIVE_CHOICE', type: 'bool',
+    memberOrder: 'native-declaration-v1', members: ['CHOICE_FIRST', 'CHOICE_SECOND'],
+    depends: ['CHOICE_OWNER'], defaults: ['CHOICE_FIRST'] }],
+} });
+runtime.menuOptionBySymbol = new Map(choiceRows.map(row => [row.configSymbol, { ...row, symbol: row.configSymbol }]));
+runtime.menuValues = new Map([['CHOICE_OWNER', 'n']]);
+runtime.catalogBaselineValues = new Map(runtime.menuValues);
+runtime.ACTIVE_PROFILE_BASELINE = { values: new Map(runtime.menuValues) };
+for (const collection of [runtime.menuTouched, runtime.catalogConditionalDefaultSymbols,
+  runtime.catalogDependencySymbols, runtime.catalogUserOverrides, runtime.catalogImportedSymbols,
+  runtime.catalogRecommendedValues, runtime.menuImportedOriginal]) collection.clear();
+runtime.markCatalogStateChanged();
+for (let cycle = 0; cycle < 3; cycle++) {
+  runtime.applyCatalogIntent(runtime.menuOptionBySymbol.get('CHOICE_OWNER'), 'y');
+  assert(runtime.menuValues.get('CHOICE_FIRST') === 'y', 'native choice default was not restored');
+  runtime.applyCatalogIntent(runtime.menuOptionBySymbol.get('CHOICE_OWNER'), 'n');
+  assert(runtime.catalogConditionalDefaultSymbols.has('CHOICE_FIRST') && !runtime.menuTouched.has('CHOICE_FIRST'),
+    'disabled native choice default lost ownership or became a user assignment');
+}
+console.log('menuconfig direct-Intent and typed/choice default lifecycle replay passed');

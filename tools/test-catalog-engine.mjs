@@ -30,6 +30,49 @@ import {
 import { safeCatalogDataRef } from '../site/wrt/lib/catalog-loader.js';
 import { createRuntimeMenu } from '../site/wrt/lib/catalog-schema6.js';
 
+// Installation is a consumer of native facts, not a package-name blacklist.
+const installationContract = { schema: 1, kind: 'openwrt-apk-provides-v1', configSymbol: 'USE_APK' };
+const installRecords = [
+  { configSymbol: 'USE_APK', kconfigSymbol: 'USE_APK', type: 'bool', states: ['n', 'y'] },
+  ...['minimal', 'complete', 'consumer'].map(packageName => ({ kind: 'package', package: packageName,
+    configSymbol: `PACKAGE_${packageName}`, kconfigSymbol: `PACKAGE_${packageName}`, type: 'tristate',
+    states: ['n', 'm', 'y'], canDisable: true,
+    kconfig: packageName === 'consumer' ? { selectsExpressions: [['PACKAGE_complete']] } : {},
+    packageInfo: { installation: { apk: { name: packageName,
+      provides: packageName === 'consumer' ? [] : ['implementation'] } }, depends: [] },
+  })),
+];
+const installModel = createCatalogModel({ schema: 5, relations: { schema: 2, records: installRecords,
+  indexes: {}, packageInstallation: installationContract } });
+const installValues = new Map([['USE_APK', 'y'], ['PACKAGE_minimal', 'y'], ['PACKAGE_complete', 'y'], ['PACKAGE_consumer', 'y']]);
+assert(validateConfig(installModel, installValues).some(row => row.code === 'package-conflict' && row.installation),
+  'simultaneous installed versioned APK providers were not diagnosed');
+const installRepair = deriveConfigurationRepairPlan(installModel, installValues);
+assert(!installRepair.unresolved.length && installRepair.finalValues.get('PACKAGE_minimal') === 'n' &&
+  installRepair.finalValues.get('PACKAGE_complete') === 'y' && installRepair.finalValues.get('PACKAGE_consumer') === 'y',
+  'provider recommendation must retain the required variant through minimal legal menuconfig actions');
+for (const [symbol, value] of [['USE_APK', 'n'], ['PACKAGE_minimal', 'm']]) {
+  assert(!validateConfig(installModel, new Map([...installValues, [symbol, value]])).some(row => row.installation),
+    'APK-only installed-Y constraints leaked into OPKG or M-only package builds');
+}
+const missingRecord = { kind: 'package', package: 'consumer', configSymbol: 'PACKAGE_consumer',
+  kconfigSymbol: 'PACKAGE_consumer', type: 'bool', states: ['n', 'y'], canDisable: true,
+  packageInfo: { depends: [{ required: true, packages: ['absent-provider'], raw: '+absent-provider' }] } };
+const missingValues = new Map([['PACKAGE_consumer', 'y']]);
+for (const complete of [false, true]) {
+  const missingModel = createCatalogModel({ schema: 5, relations: { schema: 2, records: [missingRecord], indexes: {},
+    packageClosureComplete: complete, packageClosureCapabilities: ['complete-package-build-closure-v1'],
+    packageClosureValidation: { metadataComplete: complete } } });
+  const violations = validateConfig(missingModel, missingValues, { deferred: 'report' });
+  assert(complete ? violations.some(row => row.missing) : violations.some(row => row.deferred),
+    `missing native dependency must be distinguished from incomplete legacy metadata: ${complete} ${JSON.stringify(violations)}`);
+  if (complete) {
+    const repair = deriveConfigurationRepairPlan(missingModel, missingValues);
+    assert(!repair.unresolved.length && repair.finalValues.get('PACKAGE_consumer') === 'n',
+      'a nonexistent dependency must recommend legal dependent removal, not invent a provider');
+  }
+}
+
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }

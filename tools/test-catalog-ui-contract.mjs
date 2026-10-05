@@ -408,7 +408,7 @@ expect(html.includes('class="ui-tooltip" id="uiTooltip"') &&
   html.includes('id="uiTooltipTitle"') && html.includes('id="uiTooltipEmphasis"') &&
   html.includes('id="uiTooltipBody"') &&
   !html.includes('id="menuTooltip"') && !html.includes('id="popover"') &&
-  css.includes('.ui-tooltip{position:fixed;z-index:var(--z-tooltip);width:max-content;max-width:min(400px,calc(100vw - 24px))') &&
+  css.includes('.ui-tooltip{position:fixed;z-index:var(--z-tooltip);width:max-content;max-width:min(66.6667vw,calc(100vw - 24px))') &&
   css.includes('.ui-tooltip-emphasis{') && css.includes('color:var(--danger)') &&
   !css.includes('.menu-tooltip{') && !css.includes('.popover {') &&
   sharedTooltipContract.includes("const UI_TOOLTIP_SELECTOR = '[data-ui-tooltip-title],[data-ui-tooltip-emphasis],[data-ui-tooltip-body]'") &&

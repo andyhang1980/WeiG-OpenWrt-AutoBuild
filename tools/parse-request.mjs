@@ -375,8 +375,8 @@ try {
 catch (error) { fail(`Unable to apply Kconfig overrides: ${error.message}`); }
 // Native Profile values are authoritative, including invisible defaults and
 // omitted disabled symbols. Do not re-validate the whole baseline as a set of
-// user menu actions. Explicit override verification and the refreshed upstream
-// build-closure check retain their separate, existing enforcement boundaries.
+// user menu actions. The Worker preserves explicit override fidelity, but
+// software dependency/compatibility review belongs exclusively to the browser.
 const baselineConfig = serializeConfigMap(baseline.values);
 const reconstructedConfig = serializeConfigMap(reconstructedValues);
 const reconstructedSha256 = sha256(reconstructedConfig);

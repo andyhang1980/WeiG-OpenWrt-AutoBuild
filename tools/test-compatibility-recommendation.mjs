@@ -291,8 +291,8 @@ const appCss = readFileSync(join(root, '..', 'site', 'wrt', 'app.css'), 'utf8');
 const overflowCss = readFileSync(join(root, '..', 'site', 'wrt', 'compatibility-recommendation.css'), 'utf8');
 const overflowUi = readFileSync(join(root, '..', 'site', 'wrt', 'lib', 'compatibility-recommendation-ui.js'), 'utf8');
 const components = readFileSync(join(root, '..', 'site', 'wrt', 'lib', 'ui-components.js'), 'utf8');
-assert.match(appCss, /\.ui-tooltip\{[^}]*max-width:[^;}]*100vw[^}]*max-height:[^}]*overflow:auto/s,
-  'shared tooltip is no longer viewport bounded with internal overflow');
+assert.match(appCss, /\.ui-tooltip\{[^}]*max-width:[^;}]*66\.6667vw[^}]*max-height:[^}]*overflow-x:hidden;overflow-y:auto/s,
+  'shared tooltip must wrap within two thirds of the viewport without horizontal scrolling');
 assert.match(overflowCss, /-webkit-line-clamp:\s*2/,
   'compatibility recommendation text is not visually clamped');
 assert.match(overflowUi, /dataset\.uiTooltipBody\s*=\s*fullText/,

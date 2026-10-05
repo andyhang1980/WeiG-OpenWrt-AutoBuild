@@ -749,6 +749,9 @@ async function main() {
         bodyWhiteSpace: bodyStyle?.whiteSpace || '',
         bodyHeight: body?.getBoundingClientRect().height || 0,
         bodyLineHeight: bodyStyle ? parseFloat(bodyStyle.lineHeight) || 0 : 0,
+        scrollWidth: tooltip.scrollWidth,
+        clientWidth: tooltip.clientWidth,
+        visualWidth: window.visualViewport?.width || window.innerWidth,
       };
     }`, [selector]);
   }
@@ -887,6 +890,47 @@ async function main() {
     await resetFloatingState();
   }
 
+  async function exerciseLongTooltip(context) {
+    const selector = '#selCount';
+    const message = '软件数量仅为风险提示，不代表容量计算；不计内置软件，新增软件过多可能超过 RootFS 分区容量。请查看已选插件清单，必要时减少软件或扩大可修改的 RootFS 分区。未知大小不能作为零大小处理。'.repeat(4);
+    const original = await evaluateFunction(browser, `(selector, message) => {
+      const target = document.querySelector(selector);
+      const original = target.dataset.uiTooltipBody;
+      target.dataset.uiTooltipBody = message;
+      target.focus({ preventScroll: true });
+      target.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+      return original ?? null;
+    }`, [selector, message]);
+    const state = await waitFor('long actionbar tooltip wraps safely', async () => {
+      // Background size enrichment can legitimately refresh actionbar copy.
+      // Rebind the synthetic long message if that update wins the first frame.
+      await evaluateFunction(browser, `(selector, message) => {
+        const target = document.querySelector(selector);
+        if (target.dataset.uiTooltipBody !== message) {
+          target.dataset.uiTooltipBody = message;
+          target.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+        }
+      }`, [selector, message]);
+      const state = await headerTooltipState(selector);
+      return state && !state.hidden && state.actual === message && tooltipSafe(state, context) ? state : null;
+    }, 3_000, 40).catch(async error => {
+      throw new Error(`${error.message}: ${JSON.stringify(await headerTooltipState(selector))}`);
+    });
+    expect(Boolean(state) && state.tooltipRect.right - state.tooltipRect.left <= state.visualWidth * 2 / 3 + 2,
+      context, 'long tooltip exceeds two thirds of the visual viewport', state);
+    expect(Boolean(state) && state.scrollWidth <= state.clientWidth + 1,
+      context, 'long tooltip requires horizontal scrolling', state);
+    expect(Boolean(state) && !state.singleLine && state.bodyHeight > state.bodyLineHeight + 2,
+      context, 'long tooltip did not switch to multiline layout', state);
+    await evaluateFunction(browser, `(selector, original) => {
+      const target = document.querySelector(selector);
+      if (original === null) delete target.dataset.uiTooltipBody;
+      else target.dataset.uiTooltipBody = original;
+      return true;
+    }`, [selector, original]);
+    await resetFloatingState();
+  }
+
   async function assertShortPageFooter(context) {
     await evaluateFunction(browser, `() => {
       const main = document.getElementById('app');
@@ -979,6 +1023,7 @@ async function main() {
     await ensureDockControlsVisible(context);
     await assertInside('#sideDock', context, { actionbarSafe: true });
     await exerciseDockTooltips(context);
+    await exerciseLongTooltip(context);
 
     // Font panel: use the public Aa controls and exercise its maximum value.
     await click('#densityBtn');

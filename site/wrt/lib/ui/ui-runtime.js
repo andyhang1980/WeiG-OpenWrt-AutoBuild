@@ -416,6 +416,7 @@ function positionUiTooltip(target, event = null) {
   const boundary = uiTooltipBoundary(target);
   const gap = 9;
   const margin = 8;
+  const contentMaxWidth = Math.max(1, Math.floor(viewport.width * 2 / 3));
   const anchor = uiTooltipAvoidanceTarget(target).getBoundingClientRect();
 
   const actionbar = $('actionbar');
@@ -432,7 +433,7 @@ function positionUiTooltip(target, event = null) {
     avoidRects,
     margin,
     gap,
-    maxWidth: 400,
+    maxWidth: contentMaxWidth,
     preferredHeight: layerSize.height,
     minHeight: 1,
     placements: ['below', 'above', 'right', 'left'],
@@ -441,7 +442,9 @@ function positionUiTooltip(target, event = null) {
   const measureLayer = () => {
     const rect = uiTooltip.getBoundingClientRect();
     return {
-      width: Math.min(400, Math.max(rect.width || 0, uiTooltip.scrollWidth || 0, 1)),
+      // Retain intrinsic width until the single-line fit decision. Clamping
+      // here would disguise overflowing text as a successfully fitted box.
+      width: Math.max(rect.width || 0, uiTooltip.scrollWidth || 0, 1),
       height: Math.min(360, Math.max(rect.height || 0, uiTooltip.scrollHeight || 0, 1)),
     };
   };
@@ -455,7 +458,7 @@ function positionUiTooltip(target, event = null) {
   const apply = (geometry) => {
     uiTooltip.style.width = `${Math.max(1, Math.round(geometry.width))}px`;
     uiTooltip.style.maxWidth = `${Math.max(1, Math.round(geometry.maxWidth))}px`;
-    uiTooltip.style.maxHeight = `${Math.max(1, Math.round(geometry.maxHeight))}px`;
+    uiTooltip.style.maxHeight = `${Math.max(1, Math.round(Math.min(geometry.height, geometry.maxHeight)))}px`;
     uiTooltip.style.left = `${Math.round(geometry.left)}px`;
     uiTooltip.style.top = `${Math.round(geometry.top)}px`;
     uiTooltip.dataset.placement = geometry.placement;
@@ -481,7 +484,7 @@ function positionUiTooltip(target, event = null) {
   const rendered = uiTooltip.getBoundingClientRect();
   if (rendered.width > geometry.width + 1 || rendered.height > geometry.height + 1 || overlapsAvoid(rendered)) {
     const retry = calculate({
-      width: Math.min(400, Math.max(rendered.width, uiTooltip.scrollWidth || 0, 1)),
+      width: Math.max(rendered.width, uiTooltip.scrollWidth || 0, 1),
       height: Math.min(360, Math.max(rendered.height, uiTooltip.scrollHeight || 0, 1)),
     });
     geometry = retry;
@@ -600,7 +603,11 @@ document.addEventListener('pointerup', (event) => {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') { hideUiTooltip(true); closeModal(); }
 });
-window.addEventListener('scroll', () => {
+window.addEventListener('scroll', (event) => {
+  // Wrapping/max-height changes and user scrolling inside the tooltip do not
+  // move its anchor. Ignore the layer's own scroll events in this capture
+  // listener; otherwise measuring a long message can immediately hide it.
+  if (event.target === uiTooltip || uiTooltip?.contains(event.target)) return;
   if (uiTooltipPinned && uiTooltipTarget?.isConnected) positionUiTooltip(uiTooltipTarget);
   else hideUiTooltip();
 }, { passive: true, capture: true });

@@ -15,11 +15,13 @@
 - Hide unknown-size labels/columns without removing selected plugins, states or cancellation. Yellow 50% / red 80% RootFS advice requires installed-byte coverage for every final-Y package, not partial observations; no new Worker gate.
 - Submission actions always occupy three full-width rows: request, import, .config download. Desktop buttons sit right of their copy; narrow screens place them below. Short screens scroll internally. Only the workflow display name changes to `Firmware Download / 固件下载`, not its filename/routing ID.
 
-## Native build-closure domains
+## Worker execution and offline diagnostics
+
+Catalog owns native facts; the browser owns dependency/compatibility review, recommendations and explicit forced continuation. The firmware Worker obtains pinned inputs, reconstructs configuration and executes. It does not invoke `verify-build-closure.mjs` or an extra `prepare-tmpinfo` pre-build scan. Execution safety, input identity and explicit override fidelity remain separate. Capture native metadata only after upstream has produced it. See [the runtime contract](RUNTIME-CONFIG-CONTRACT.md).
 
 - Reuse the shared Kconfig parser/evaluator. The request parser emits job-local `conditionContext` in the existing snapshot-bound symbol-kind receipt from the verified graph. Known bool/tristate omissions are N; unknown symbols, missing scalar values and invalid expressions remain deferred. Do not rewrite `.config` or run implicit Defconfig to satisfy the check.
 - Keep native source compile targets separate from concrete packages and `Provides` registrations. A `Source-Makefile` owner is not a virtual provider. `Build-Depends` reaches the source compile target even if none of its outputs is installed; host-only edges do not imply target installation, and unsupported build types are diagnosed rather than stripped.
-- `tools/lib/native-make-graph.mjs` consumes the assignments already generated in `tmp/.packagedeps`. GNU Make expands conditions in an isolated recipe-free input; it never loads the build Makefile. The previous independently inferred compilation graph has been removed. Upstream filtering removes same-source providers before counting alternatives; multiple remaining providers emit guarded edges, so none enabled means no edge. One remaining provider can still compile while uninstalled. Selected/default variants and typed host targets are retained. Missing graph/source evidence remains inconclusive; known failure reachability still blocks with a proof path.
+- Offline diagnostics use `tools/lib/native-make-graph.mjs` to consume assignments already generated in `tmp/.packagedeps`. GNU Make expands conditions in an isolated recipe-free input; it never loads the build Makefile. The previous independently inferred compilation graph has been removed. Upstream filtering removes same-source providers before counting alternatives; multiple remaining providers emit guarded edges, so none enabled means no edge. One remaining provider can still compile while uninstalled. Selected/default variants and typed host targets are retained. Missing evidence remains inconclusive; a known failure produces a diagnostic proof path, not Worker build admission.
 - `package-info.txt.gz` and `package-deps.mk.gz` preserve the native inputs. The report records input hashes, evaluated roots, typed nodes and variants alongside the exact request identity. Offline CLI replay accepts `--package-info`, `--package-deps` and optional `--make`; GNU Make must be available. Local regression uses `WEIG_MAKE` when the executable is not named `make` or is outside PATH. No recipe, Defconfig, download or compilation is invoked by the adapter.
 - Historical reports without native metadata can prove condition evaluation regressions but not complete graph replay. Do not equate contract tests, Pages deployment or browser success with successful firmware compilation.
 
@@ -31,7 +33,7 @@ translation publishers must clear inherited publication fields before committing
 assets, then stamp and verify the channel wrapper. Snapshot promotion keeps the
 same assetRef and verifies manifest content, not just commit existence.
 
-The Worker reads index and compatibility bytes at the request's immutable revision.
+The Worker reads reconstruction assets at the request's immutable revision, not compatibility rules for software review.
 Unstamped historical/new manifests remain supported; an explicit conflicting
 assetRef, source commit mismatch, or incorrect compressed hash remains an error.
 `tools/test-build-closure.mjs` exercises the actual network-reader path with mocked
@@ -77,8 +79,8 @@ request is the supported migration path.
 - `bool`/`tristate` retain legal N/M/Y controls. `int`/`hex`/`string` editing, dependent invalidation and recommendations use the shared engine with type, range, visibility and dependency constraints. Present zero, empty string and literal `n` are values, not absent assignments. Nonzero dependency ceilings allow scalar values; UNKNOWN remains deferred.
 - A known inactive scalar can be removed through a recommendation without enabling its owner or changing Target/Profile or image format. An invalid active value may use its applicable typed default only if simulation reduces blocking issues without adding new ones. Application uses the same engine and rolls back on failure; do not manufacture N/M/Y controls for scalar rows.
 - Schema 6 adds nullable override values: `["SYMBOL", null]` removes that assignment from the Native Profile baseline. It is distinct from `"n"`, `"0"` and the serialized empty string `"\"\""`. Import, reconstruction and effective-config verification preserve this distinction; protected identity and unknown-symbol checks remain. Old string-valued requests remain readable. New nullable requests require the matching updated Worker; do not claim older consumers support this additive representation.
-- `buildDependency` is optional in the existing compatibility contract. Ordinary build-failure rules use the shared browser matcher for package selection and exact environment scope. Rules that declare `buildDependency` additionally use the refreshed native package graph. Malformed rules and unresolved reachable graph facts still fail closed; neither path silently rewrites user configuration.
-- Regression coverage includes anonymous scalar types/ranges/zero/empty/UNKNOWN, baseline deletion through the real Worker CLI, ordinary-rule browser/Worker parity and recommendation → second Test → export → reimport. Browser or contract success is not firmware compilation or exhaustive native `conf` parity.
+- `buildDependency` is optional in the existing compatibility contract. The browser derives triggers from exact environment scope and the current native package graph; incomplete evidence must not become a fabricated unique recommendation. The Worker does not use these rules to review software selections or rewrite configuration.
+- Regression coverage includes anonymous scalar types/ranges/zero/empty/UNKNOWN, baseline deletion through the real Worker CLI, offline rule diagnostics and recommendation → second Test → export → reimport. Browser or contract success is not firmware compilation or exhaustive native `conf` parity.
 
 ## 0. Cloning and project configuration
 
@@ -277,7 +279,7 @@ When runtime Catalog data changes, validate/publish that snapshot before AutoBui
 
 ## 10. Catalog selection and final configuration
 
-Prompt/menu visibility restricts interactive editing, not the validity of hidden native defaults. Absent scalar values are not enabled configuration entries. Worker reconstruction preserves the Native Profile baseline and validates explicit overrides only; it must not run interactive whole-baseline validation. The separate upstream build-closure check remains active. Browser tests wait for the Catalog baseline and fonts before measuring interactive overlays; rendering the shell alone is not a readiness signal.
+Prompt/menu visibility restricts interactive editing, not the validity of hidden native defaults. Absent scalar values are not enabled configuration entries. Worker reconstruction preserves the Native Profile baseline and validates explicit overrides only, without interactive whole-baseline validation or build-closure review. Browser tests wait for the Catalog baseline and fonts before measuring interactive overlays; rendering the shell alone is not a readiness signal.
 
 For a coordinated parser/runtime change, run
 `node tools/test-catalog-producer-contract.mjs --producer-root <Catalog-checkout>`.

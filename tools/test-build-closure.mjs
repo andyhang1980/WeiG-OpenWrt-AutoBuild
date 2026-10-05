@@ -207,6 +207,10 @@ try {
   assert.match(cli.stderr, /customTarget identity is incomplete/);
   const workflow = readFileSync(join(ROOT, '.github/workflows/custom-build.yml'), 'utf8');
   for (const file of ['package-info.txt.gz', 'package-deps.mk.gz']) assert(workflow.includes(file));
+  assert(!workflow.includes('tools/verify-build-closure.mjs'),
+    'firmware Workers must execute retained configurations without compatibility review');
+  assert(!workflow.includes('make prepare-tmpinfo'),
+    'diagnostic metadata collection must not introduce a second pre-build scan');
   console.log('Native GNU Make closure, typed domains, variants, missing evidence, safety and CLI tests passed');
 } finally {
   rmSync(directory, { recursive: true, force: true });

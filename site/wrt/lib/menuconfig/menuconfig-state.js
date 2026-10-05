@@ -456,9 +456,17 @@ function recordCatalogExplicitIntent(option, value) {
     menuTouched.add(option.symbol);
     return 'user';
   }
-  const override = CATALOG_ENGINE?.resolveCatalogUserOverride
+  let override = CATALOG_ENGINE?.resolveCatalogUserOverride
     ? CATALOG_ENGINE.resolveCatalogUserOverride(catalogInheritedValue(option.symbol), value)
     : (catalogInheritedValue(option.symbol) === value ? null : value);
+  // An inherited inactive N is not the active default. A direct exclusion
+  // against an applicable Y/M default must remain explicit across toggles.
+  if (override === null && value !== null && CATALOG_MODEL && CATALOG_ENGINE?.resolveKconfigDefault) {
+    const record = CATALOG_MODEL.bySymbol.get(option.symbol);
+    const context = catalogValidationContext(menuValues, 'interactive');
+    const resolved = record && CATALOG_ENGINE.resolveKconfigDefault(record, context.values, context.validationOptions);
+    if (resolved?.status === 'resolved' && String(resolved.value) !== String(value)) override = value;
+  }
   if (override === null) {
     catalogUserOverrides.delete(option.symbol);
     if (!catalogRecommendedValues.has(option.symbol) && !catalogImportedSymbols.has(option.symbol)) {
@@ -486,6 +494,7 @@ function applyCatalogIntent(option, value, force = false, source = 'user') {
         protectedSymbols: catalogProtectedSymbols(value === 'n' ? option.symbol : ''),
         preferredValues: catalogPreferredValues(),
         explicitSymbols: catalogUserOverrides.keys(),
+        derivedSymbols: catalogConditionalDefaultSymbols,
         validationOptions: context.validationOptions,
       });
     let directIntentChanged = false;
@@ -493,15 +502,14 @@ function applyCatalogIntent(option, value, force = false, source = 'user') {
       if (change.remove) menuValues.delete(change.symbol);
       else menuValues.set(change.symbol, change.to);
       const explicit = change.symbol === option.symbol;
-      const conditionalDefault = ['conditional-default', 'choice-default'].includes(change.reason);
+      const conditionalDefault = !explicit && (['conditional-default', 'choice-default'].includes(change.reason) ||
+        result.derivedSymbols?.has(change.symbol));
       const changedOption = menuOptionBySymbol.get(change.symbol);
       if (conditionalDefault) {
         menuTouched.delete(change.symbol);
         catalogImportedSymbols.delete(change.symbol);
         catalogDependencySymbols.delete(change.symbol);
-        if (change.to === (catalogBaselineValues.get(change.symbol) ?? 'n')) {
-          catalogConditionalDefaultSymbols.delete(change.symbol);
-        } else catalogConditionalDefaultSymbols.add(change.symbol);
+        catalogConditionalDefaultSymbols.add(change.symbol);
       } else if (source === 'restore' && explicit) {
         if (!catalogRecommendedValues.has(change.symbol) && !catalogImportedSymbols.has(change.symbol)) {
           menuTouched.delete(change.symbol);
@@ -557,7 +565,8 @@ function reconcileImportedConditionalDefaults(options = {}) {
   if (!CATALOG_MODEL || !CATALOG_ENGINE?.reconcileKconfigDerivedValues) return;
   const context = catalogValidationContext(menuValues, 'interactive');
   const result = CATALOG_ENGINE.reconcileKconfigDerivedValues(
-    CATALOG_MODEL, context.values, { ...context.validationOptions, ...options });
+    CATALOG_MODEL, context.values, { ...context.validationOptions,
+      derivedSymbols: catalogConditionalDefaultSymbols, explicitSymbols: catalogUserOverrides.keys(), ...options });
   const derivedSymbols = result.derivedSymbols || new Set();
   const derivedReasons = result.derivedReasons || new Map();
   for (const change of result.changes) {
@@ -580,7 +589,7 @@ function reconcileImportedConditionalDefaults(options = {}) {
     menuImportedNonDefault.delete(symbol);
     catalogDependencySymbols.delete(symbol);
     const baseline = catalogBaselineValues.get(symbol) ?? 'n';
-    if (value !== baseline && ['conditional-default', 'choice-default'].includes(derivedReasons.get(symbol))) {
+    if (['conditional-default', 'choice-default'].includes(derivedReasons.get(symbol))) {
       catalogConditionalDefaultSymbols.add(symbol);
     } else {
       catalogConditionalDefaultSymbols.delete(symbol);

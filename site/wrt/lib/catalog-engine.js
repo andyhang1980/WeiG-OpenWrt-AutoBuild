@@ -1091,6 +1091,7 @@ export function expandCompactRelations(compact) {
         inheritedMenuVisibleIfAst: firstDefinition.inheritedMenuVisibleIfAst || [],
       },
       packageInfo: {
+        ...(capabilityRows.installation ? { installation: capabilityRows.installation } : {}),
         depends: packageDepends,
         rawDepends: packageDepends.map((item) => item.raw),
         dependencyRelations: packageDepends,
@@ -1139,6 +1140,7 @@ export function expandCompactRelations(compact) {
     relationsComplete: complete,
     capabilities: compact.relationCapabilities || [],
     packageClosureComplete: packageClosure.complete,
+    ...(compact.packageInstallation ? { packageInstallation: compact.packageInstallation } : {}),
     packageClosureCapabilities: packageClosure.capabilities,
     packageClosureValidation: packageClosure.validation,
     validation,
@@ -1474,6 +1476,18 @@ export function createCatalogModel(catalog) {
       ...(packageProviders.get(name) || []), ...rows.map((owner) => byPackage.get(owner)),
     ])]);
   }
+  const installedProviders = new Map();
+  const packageInstallation = relations.packageInstallation;
+  if (packageInstallation?.schema === 1 && packageInstallation.kind === 'openwrt-apk-provides-v1' &&
+      packageInstallation.configSymbol === 'USE_APK') {
+    for (const record of records) {
+      const apk = record.packageInfo?.installation?.apk;
+      for (const name of new Set([apk?.name, ...(apk?.provides || [])].filter(Boolean))) {
+        const owners = installedProviders.get(name) || [];
+        owners.push(record); installedProviders.set(name, owners);
+      }
+    }
+  }
   const reverseDependencies = new Map();
   // Derive a trusted reverse index from forward facts once per model. Old
   // authored reverse indexes can be stale; do not rescan all records for
@@ -1568,6 +1582,7 @@ export function createCatalogModel(catalog) {
     byPackage,
     providers,
     packageProviders,
+    installedProviders,
     forwardDependents,
     reverseDependencies,
     reverseKconfig,
@@ -2148,7 +2163,20 @@ function packageDependencyViolations(model, record, values, options) {
       }
     }
     const enforceable = dependency.packages.filter((name) => enforceablePackage(model, name));
-    if (!enforceable.length || dependency.packages.some((name) => packageSatisfied(model, name, values))) continue;
+    if (dependency.packages.some((name) => packageSatisfied(model, name, values))) continue;
+    if (!enforceable.length) {
+      const absent = dependency.packages.every((name) => !packageProviderRecords(model, name).length);
+      if (absent && model.packageClosureComplete === true && model.packageClosureValidation.metadataComplete === true) {
+        violations.push({ code: 'package-dependency-unsatisfied', symbol: record.configSymbol, package: record.package,
+          dependency: dependency.raw || dependency.packages.join(' || '), packages: dependency.packages,
+          missing: true, reason: 'provider-absent' });
+      } else if (options.deferred !== 'ignore') {
+        violations.push({ code: 'package-dependency-deferred', symbol: record.configSymbol, package: record.package,
+          dependency: dependency.raw || dependency.packages.join(' || '), packages: dependency.packages,
+          deferred: true, reason: 'provider-availability-unknown' });
+      }
+      continue;
+    }
     violations.push({ code: 'package-dependency-unsatisfied', symbol: record.configSymbol, package: record.package,
       dependency: dependency.raw || dependency.packages.join(' || '), packages: dependency.packages });
   }
@@ -2339,6 +2367,28 @@ export function validateConfig(model, inputValues, rawOptions = {}) {
   });
   const violations = [];
   for (const record of model.records) violations.push(...recordViolations(model, record, values, options));
+  // Versioned APK provides are exclusive installation identities. The native
+  // producer supplies ABI-qualified names; @ capabilities never enter this
+  // index. M builds a package but does not install it into RootFS.
+  if (values.get('USE_APK') === 'y') {
+    if (options.deferred !== 'ignore') {
+      for (const record of model.records) {
+        const unresolved = record.packageInfo?.installation?.apk?.unresolvedProvides;
+        if (recordInstalled(record, values) && unresolved?.length) violations.push({
+          code: 'package-installation-deferred', package: record.package,
+          symbol: record.configSymbol, deferred: true, reason: 'unsupported-provides', provides: unresolved,
+        });
+      }
+    }
+    for (const [capability, owners] of model.installedProviders || []) {
+      const installed = owners.filter(record => recordInstalled(record, values));
+      if (installed.length < 2) continue;
+      const names = installed.map(record => record.package).sort();
+      violations.push({ code: 'package-conflict', package: names[0],
+        ...(names.length === 2 ? { otherPackage: names[1] } : { otherPackages: names.slice(1) }),
+        capability, installation: true, packageManager: 'apk' });
+    }
+  }
   const conflictKeys = new Set();
   for (const record of model.records) {
     if (!recordEnabled(record, values)) continue;
@@ -2787,9 +2837,15 @@ function derivedDefaultState(model, record, values, options = {}) {
 
 function reconcileDerivedDefaults(model, values, changes, options = {}) {
   const records = model?.promptlessDefaultRecords || [];
-  const initialSymbols = new Set(values.keys());
-  const derivedSymbols = new Set();
-  const derivedReasons = new Map();
+  const initialSymbols = new Set([...values.keys(), ...(options.derivedSymbols || [])]);
+  // Persist ownership across transactions: an automatic dependency shutdown
+  // is not a user assignment, even when its effective N equals the baseline.
+  const derivedSymbols = new Set([...(options.derivedSymbols || [])].filter((symbol) =>
+    symbol !== options.intentSymbol && !options.explicitSymbols?.has(symbol) &&
+    !options.trustedSymbols?.has(symbol) &&
+    (model.bySymbol.get(symbol)?.defaults?.length || model.bySymbol.get(symbol)?.choice)));
+  const derivedReasons = new Map([...derivedSymbols].map((symbol) =>
+    [symbol, model.bySymbol.get(symbol)?.choice ? 'choice-default' : 'conditional-default']));
   for (let pass = 0; pass < 64; pass++) {
     const before = changes.length;
     let invalidatedTransientDefault = false;
@@ -3044,7 +3100,11 @@ export function deriveKconfigPrerequisitePlans(model, inputValues, record, reque
 function applyScalarIntent(model, inputValues, record, intent) {
   const initial = new Map(valuesMap(inputValues));
   const options = validationOptions(initial, { ...(intent.validationOptions || {}), model,
-    typedRelationsComplete: model.typedRelationsComplete === true });
+    typedRelationsComplete: model.typedRelationsComplete === true,
+    intentSymbol: record.configSymbol,
+    explicitSymbols: new Set(intent.explicitSymbols || []),
+    derivedSymbols: new Set(intent.derivedSymbols || []),
+  });
   const constraints = kconfigStateConstraints(model, record, initial, options);
   const remove = intent.value === null;
   const value = remove ? null : String(intent.value ?? '');
@@ -3095,6 +3155,7 @@ export function applyUserIntent(model, inputValues, intent) {
   // (for example the dependency gate) remain free to lower the stale target.
   options.intentSymbol = symbol;
   options.explicitSymbols = normalizedIntent.explicitSymbols;
+  options.derivedSymbols = new Set(intent?.derivedSymbols || []);
   const constraints = kconfigStateConstraints(model, record, initialValues, options);
   const legal = constraints.legalStates.includes(value);
   const alreadyRequested = value !== 'n' && legal && constraints.current === value &&
@@ -3159,6 +3220,12 @@ export function applyUserIntent(model, inputValues, intent) {
     for (const [preferredSymbol, rawPreferred] of preferredValues) {
       if (preferredSymbol === symbol || !model.bySymbol.has(preferredSymbol)) continue;
       const preferredRecord = model.bySymbol.get(preferredSymbol);
+      if (['string', 'int', 'hex'].includes(preferredRecord.type)) {
+        if (rawPreferred != null && dependencyLevel(preferredRecord, values, options) > 0 &&
+            scalarValueValid(preferredRecord.type, String(rawPreferred)) &&
+            setValue(values, changes, preferredSymbol, String(rawPreferred), 'preferred-intent', '', true)) restored = true;
+        continue;
+      }
       if (!['bool', 'tristate'].includes(preferredRecord.type)) continue;
       const preferred = normalizeKconfigStateValue(preferredRecord, rawPreferred);
       const preferredConstraints = kconfigStateConstraints(model, preferredRecord, values, options);
@@ -3239,6 +3306,7 @@ function configurationRepairRecord(model, violation) {
 function configurationRepairIntent(rawOptions, validation, value) {
   return {
     dependencySymbols: rawOptions.dependencySymbols,
+    derivedSymbols: rawOptions.derivedSymbols,
     protectedSymbols: rawOptions.protectedSymbols,
     preferredValues: rawOptions.preferredValues,
     // validationOptions has already materialized one-shot iterators (the UI
@@ -3252,7 +3320,7 @@ function configurationRepairIntent(rawOptions, validation, value) {
 }
 
 function configurationRepairCandidate(model, values, violation, rawOptions, validation) {
-  if (!['kconfig-dependency-unsatisfied', 'package-dependency-unsatisfied',
+  if (!['kconfig-dependency-unsatisfied', 'package-dependency-unsatisfied', 'package-conflict',
     'kconfig-scalar-invalid', 'kconfig-range-unsatisfied'].includes(violation?.code)) {
     return null;
   }
@@ -3274,12 +3342,23 @@ function configurationRepairCandidate(model, values, violation, rawOptions, vali
     } catch { return null; }
   }
   if (!record?.configSymbol || stateLevel(values.get(record.configSymbol) ?? 'n') <= 0) return null;
-  const value = configurationRepairValue(record, values);
-  if (value === 'n') return null;
+  const value = violation.missing || violation.code === 'package-conflict' ? 'n' : configurationRepairValue(record, values);
+  if (value === 'n' && !violation.missing && violation.code !== 'package-conflict') return null;
   const intent = configurationRepairIntent(rawOptions, validation, value);
   let result = null;
   let steps = [];
-  if (violation.code === 'kconfig-dependency-unsatisfied') {
+  if (violation.missing) {
+    try { result = compatibilityDisablePlan(model, record, values, intent); } catch { return null; }
+    steps = result?.steps || [];
+  } else if (violation.code === 'package-conflict') {
+    const names = [violation.package, violation.otherPackage, ...(violation.otherPackages || [])].filter(Boolean);
+    const plans = deriveCompatibilityPlans(model, values, { values,
+      records: names.map(name => model.byPackage.get(name)).filter(Boolean),
+      rule: { match: 'all-installed', packages: names },
+    }, intent);
+    if (!plans.recommended) return null;
+    result = plans.recommended; steps = result.steps || [];
+  } else if (violation.code === 'kconfig-dependency-unsatisfied') {
     const plans = deriveKconfigPrerequisitePlans(model, values, record, value, intent);
     if (!plans.recommended) return null;
     result = plans.recommended;
@@ -3316,9 +3395,11 @@ function configurationRepairCandidate(model, values, violation, rawOptions, vali
   if (finalKeys.has(currentKey) || [...finalKeys].some((key) => !beforeKeys.has(key))) return null;
   const candidateChanges = (result.changes || []).filter((change) => change?.from !== change?.to);
   if (!candidateChanges.length) return null;
+  const actionRecord = violation.code === 'package-conflict'
+    ? model.bySymbol.get(result.symbol) || record : record;
   return {
-    symbol: record.configSymbol,
-    package: record.package || packageNameFromSymbol(record.configSymbol),
+    symbol: actionRecord.configSymbol,
+    package: actionRecord.package || packageNameFromSymbol(actionRecord.configSymbol),
     value,
     steps: steps.map((step) => ({
       symbol: String(step.symbol || ''),
@@ -3337,8 +3418,10 @@ function configurationRepairCandidate(model, values, violation, rawOptions, vali
  * Deterministic repair classes include a package dependency
  * with one selectable provider (resolved by applyUserIntent's normal cascade),
  * and a Kconfig dependency with one unique minimum prerequisite plan (resolved
- * by deriveKconfigPrerequisitePlans).  Conflicts, choices, multiple providers,
- * deferred expressions, and equal-cost alternatives are never guessed at.
+ * by deriveKconfigPrerequisitePlans). Installation conflicts reuse the same
+ * compatibility planner; proven absent providers can disable their consumer.
+ * Choices, multiple providers, deferred expressions and equal-cost alternatives
+ * are never guessed at.
  * Stale descendants of a tracked disabled owner may instead be reconciled
  * through the existing dependency cascade without re-enabling that owner.
  * Every simulated action must remove its selected violation without adding a
@@ -3372,7 +3455,7 @@ export function deriveConfigurationRepairPlan(model, inputValues, rawOptions = {
     if (!blocking.length) break;
     let progressed = false;
     for (const violation of blocking) {
-      if (!['kconfig-dependency-unsatisfied', 'package-dependency-unsatisfied',
+      if (!['kconfig-dependency-unsatisfied', 'package-dependency-unsatisfied', 'package-conflict',
         'kconfig-scalar-invalid', 'kconfig-range-unsatisfied'].includes(violation.code)) continue;
       const candidate = configurationRepairCandidate(model, values, violation, rawOptions, validation);
       if (!candidate) continue;
