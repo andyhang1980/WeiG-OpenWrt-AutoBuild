@@ -4825,10 +4825,13 @@ function deriveGraphBuildDependencyPlans(model, inputValues, warning, intent = {
     const record = packageGraphRecord(model, name);
     if (record && !directTargets.has(record.configSymbol)) dependencySymbols.add(record.configSymbol);
   }
-  const cleanupIntent = { ...intent, dependencySymbols };
+  const preferredValues = intent.preferredValues instanceof Map
+    ? new Map(intent.preferredValues) : new Map(Object.entries(intent.preferredValues || {}));
+  const protectedSymbols = new Set(intent.protectedSymbols || []);
+  const explicitSymbols = new Set(intent.explicitSymbols || options.explicitSymbols || []);
+  const cleanupIntent = { ...intent, dependencySymbols, preferredValues, protectedSymbols, explicitSymbols };
   let values = new Map(startingValues);
   let changes = [];
-  const allSteps = [];
   for (const record of targetRecords) {
     if (normalizeValue(values.get(record.configSymbol) ?? 'n') === 'n') continue;
     let plan = null;
@@ -4838,7 +4841,16 @@ function deriveGraphBuildDependencyPlans(model, inputValues, warning, intent = {
     }
     values = plan.values;
     changes = compatibilityPlanChanges(startingValues, values, [...changes, ...plan.changes]);
-    allSteps.push(...plan.steps);
+    // Every cut belongs to one recommendation transaction. A subsequent
+    // cut must not restore an earlier accepted N from the imported user's
+    // original Y preference. Only accepted actions/targets lose protection;
+    // unrelated explicit selections and surviving shared dependencies keep it.
+    for (const target of [...plan.steps, ...requiredTargets]) {
+      if (normalizeValue(values.get(target.symbol) ?? 'n') !== 'n') continue;
+      preferredValues.set(target.symbol, 'n');
+      protectedSymbols.delete(target.symbol);
+      explicitSymbols.add(target.symbol);
+    }
   }
   const stepBySymbol = new Map();
   for (const record of targetRecords) stepBySymbol.set(record.configSymbol, {

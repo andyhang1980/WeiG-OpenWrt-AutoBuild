@@ -48,7 +48,20 @@ try {
         preferredValues: catalogPreferredValues(), derivedSymbols: catalogConditionalDefaultSymbols,
         explicitSymbols: new Set(catalogUserOverrides.keys()), validationOptions: evaluation.context.validationOptions };
       const plans = CATALOG_ENGINE.deriveCompatibilityPlans(CATALOG_MODEL, warning.values, warning, intent);
-      if (!plans.recommended) throw Error('No executable recommendation: ' + JSON.stringify(plans.reason));
+      if (!plans.recommended) {
+        const records = warning.records.map(row => {
+          const constraints = CATALOG_ENGINE.kconfigStateConstraints(CATALOG_MODEL, row,
+            warning.values, evaluation.context.validationOptions);
+          let directError = null;
+          try { CATALOG_ENGINE.applyUserIntent(CATALOG_MODEL, warning.values,
+            { ...intent, symbol: row.configSymbol, value: 'n' }); }
+          catch (error) { directError = { message: error.message, violations: error.violations }; }
+          return { package: row.package, symbol: row.configSymbol, canDisable: row.canDisable,
+            userSettable: row.userSettable, protected: intent.protectedSymbols.has(row.configSymbol),
+            type: row.type, states: row.states, constraints, directError };
+        });
+        throw Error('No executable recommendation: ' + JSON.stringify({ reason: plans.reason, records }));
+      }
       globalThis.__compatibilityTest = { loaded, id, expected: [...plans.recommended.steps,
         ...(plans.recommended.requiredTargets || []), ...(plans.recommended.retainedTargets || [])] };
       openCompatibilityWarningModal(evaluation, warning, plans);

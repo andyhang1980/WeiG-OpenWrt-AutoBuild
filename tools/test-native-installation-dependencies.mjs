@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { applyUserIntent, createCatalogModel, deriveConfigurationRepairPlan,
   deriveCompatibilityPlans, evaluateCompatibilityRules, normalizeCompatibilityDocument,
   parseConfigDocument, validateConfig } from '../site/wrt/lib/catalog-engine.js';
@@ -122,4 +123,62 @@ for (const typed of [false, true]) {
   assert.equal(deriveCompatibilityPlans(unknownGraph, unknown, unknownHit).recommended, null,
     'unknown negative condition was mistaken for proven truth');
 }
-console.log('Native runtime dependencies, retained participants and negative graph proofs passed');
+// Frozen reviewed data, not a second live compatibility authority.
+const compileFacts = JSON.parse(readFileSync(new URL('./fixtures/compatibility-cjdns-20261006.json',
+  import.meta.url), 'utf8'));
+const dependency = name => ({ raw: '+' + name, required: true, packages: [name] });
+const compileModel = createCatalogModel({ schema: 6, relations: { schema: 2, indexes: {},
+  packageClosureComplete: true, packageClosureCapabilities: ['complete-package-build-closure-v1'],
+  records: [
+    pkg('cjdns', { packageInfo: { depends: [dependency('shared-library')] } }),
+    pkg('cjdns-tests'),
+    pkg('luci-app-cjdns', { packageInfo: { depends: [dependency('cjdns')] },
+      kconfig: { selectsExpressions: [['PACKAGE_cjdns']] } }),
+    pkg('other-interface', { packageInfo: { depends: [dependency('cjdns')] } }),
+    pkg('shared-library'), pkg('shared-user', { packageInfo: { depends: [dependency('shared-library')] } }),
+    pkg('unrelated'),
+    { kind: 'config', configSymbol: 'GCC_VERSION', kconfigSymbol: 'GCC_VERSION', type: 'string' },
+  ] } });
+for (const rule of compileFacts.rules) {
+  const document = { schema: 7, rules: [rule] };
+  const sourceId = Object.keys(rule.scope)[0];
+  const context = { sourceId, branchName: rule.scope[sourceId][0], sourceCommit: rule.sourceCommits[0],
+    inputsHash: rule.inputHashes[0], targetSystem: 'x86', targetSubtarget: '64', targetProfile: 'DEVICE_generic',
+    validationOptions: { symbolTypes: compileModel.symbolTypes } };
+  for (const state of ['m', 'y']) {
+    for (const entry of rule.buildDependency.package === 'cjdns'
+      ? ['cjdns', 'luci-app-cjdns', 'other-interface'] : ['cjdns-tests']) {
+      const values = new Map([['GCC_VERSION', rule.failure.observed.compilerVersion],
+        ['PACKAGE_shared-library', 'y'], ['PACKAGE_shared-user', 'y'], ['PACKAGE_unrelated', 'y'],
+        ['PACKAGE_' + rule.buildDependency.package, state], ['PACKAGE_' + entry, state]]);
+      const warning = evaluateCompatibilityRules(compileModel, document, values, context).warnings[0];
+      assert(warning, rule.id + ' lost direct or graph-dependent selection');
+      const result = deriveCompatibilityPlans(compileModel, values, warning,
+        { dependencySymbols: new Set(['PACKAGE_shared-library']),
+          preferredValues: new Map(values), protectedSymbols: new Set(values.keys()),
+          explicitSymbols: new Set(values.keys()) }).recommended;
+      assert(result, rule.id + ' has no legal shared recommendation');
+      assert.equal(result.values.get('PACKAGE_' + entry), 'n');
+      assert.equal(result.values.get('PACKAGE_' + rule.buildDependency.package), 'n');
+      assert.equal(result.values.get('PACKAGE_shared-user'), 'y');
+      assert.equal(result.values.get('PACKAGE_shared-library'), 'y', 'surviving shared dependency was removed');
+      assert.equal(result.values.get('PACKAGE_unrelated'), 'y');
+      const exported = parseConfigDocument(serializeConfigMap(result.values));
+      assert.equal(evaluateCompatibilityRules(compileModel, document, exported, context).warnings.length, 0);
+      for (const changed of [
+        { sourceId: 'OpenWrt' }, { branchName: 'main' }, { sourceCommit: 'f'.repeat(40) },
+        { inputsHash: 'f'.repeat(64) }, { targetSubtarget: 'generic' },
+      ]) assert.equal(evaluateCompatibilityRules(compileModel, document, values,
+        { ...context, ...changed }).warnings.length, 0, 'exact fault scope leaked');
+      const changedCompiler = new Map(values); changedCompiler.set('GCC_VERSION', '14.3.0');
+      assert.equal(evaluateCompatibilityRules(compileModel, document, changedCompiler, context).warnings.length, 0);
+      const missingCompiler = new Map(values); missingCompiler.delete('GCC_VERSION');
+      assert.throws(() => evaluateCompatibilityRules(compileModel, document, missingCompiler, context),
+        /if cannot be resolved/, 'missing compiler evidence must remain unresolved');
+    }
+  }
+  assert.equal(evaluateCompatibilityRules(compileModel, document,
+    new Map([['GCC_VERSION', rule.failure.observed.compilerVersion],
+      ['PACKAGE_unrelated', 'y']]), context).warnings.length, 0);
+}
+console.log('Native runtime dependencies, retained participants, negative graph proofs and exact compile facts passed');

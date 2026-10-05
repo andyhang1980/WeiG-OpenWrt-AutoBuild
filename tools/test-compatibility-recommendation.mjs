@@ -275,6 +275,23 @@ assert.equal(policyPlan.recommended.values.get('PACKAGE_unrelated-ui'), 'y');
 const roundtrip = parseConfigDocument(serializeConfigMap(policyPlan.recommended.values));
 assert.equal(evaluateCompatibilityRules(policyModel, policyRule, roundtrip, policyContext).warnings.length, 0,
   'export/import and a second check must not resurrect a resolved failure');
+for (const objectPreferences of [false, true]) {
+  const preferences = objectPreferences ? Object.fromEntries(policyValues) : new Map(policyValues);
+  const protectedSymbols = new Set(policyValues.keys()), explicitSymbols = new Set(policyValues.keys());
+  const importedPlan = deriveCompatibilityPlans(policyModel, policyValues, policyWarning, {
+    preferredValues: preferences, protectedSymbols, explicitSymbols,
+    dependencySymbols: new Set(['PACKAGE_service-core', 'PACKAGE_failed-module']),
+  }).recommended;
+  assert(importedPlan, 'imported Y preferences resurrected an earlier accepted cancellation');
+  for (const name of ['service-ui', 'service-core', 'failed-module']) {
+    assert.equal(importedPlan.values.get('PACKAGE_' + name), 'n');
+  }
+  assert.equal(importedPlan.values.get('PACKAGE_unrelated-ui'), 'y');
+  assert.deepEqual(objectPreferences ? new Map(Object.entries(preferences)) : preferences, policyValues,
+    'planning mutated the imported preference authority');
+  assert.deepEqual(protectedSymbols, new Set(policyValues.keys()));
+  assert.deepEqual(explicitSymbols, new Set(policyValues.keys()));
+}
 for (const context of [{ ...policyContext, sourceId: 'Other' }, { ...policyContext, branchName: 'next' },
   { ...policyContext, targetSubtarget: '32' }]) {
   assert.equal(evaluateCompatibilityRules(policyModel, policyRule, policyValues, context).warnings.length, 0);
