@@ -890,6 +890,23 @@ corruptV6 = true;
 let v6Rejected = false;
 try { await v6Loader().fetchCompatibility(); } catch { v6Rejected = true; }
 assert(v6Rejected, 'corrupt declared v6 asset was silently downgraded');
+const v7Document = { schema: 7, rules: [] };
+const v7Payload = compressedDocument(v7Document);
+const v7Index = structuredClone(v6Index);
+v7Index.assets.compatibilityV7 = { asset: 'compatibility.v7.json.gz', schema: 7, rules: 0,
+  hash: v7Payload.hash, bytes: v7Payload.bytes.length,
+  jsonBytes: new TextEncoder().encode(JSON.stringify(v7Document)).byteLength };
+let corruptV7 = false;
+const v7Loader = () => createCatalogLoader({ repository: 'owner/catalog', engine: { createCatalogModel },
+  fetchImpl: async url => url.includes('index.json') ? new Response(JSON.stringify(v7Index)) :
+    new Response(url.includes('compatibility.v7.json.gz')
+      ? corruptV7 ? new Uint8Array([1, 2]) : v7Payload.bytes : v6Payload.bytes),
+  cacheStorage: fakeCaches(), subtle: null });
+assert((await v7Loader().fetchCompatibility()).compatibility.schema === 7, 'v7 retention asset was not selected');
+corruptV7 = true;
+let v7Rejected = false;
+try { await v7Loader().fetchCompatibility(); } catch { v7Rejected = true; }
+assert(v7Rejected, 'corrupt v7 retention asset must not silently downgrade');
 
 const applicationsDocument = {
   schema: 1,

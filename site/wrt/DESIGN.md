@@ -119,6 +119,11 @@ The unified layer order is `--z-content`, `--z-sticky`, `--z-dropdown`,
 
 ## 7. Do and don’t
 
+Compatibility and configuration-preflight dialogs use the shared modal shell:
+the header and action footer stay visible, while only the middle content
+scrolls within the viewport. Evidence remains available in expandable details;
+long paths and commit references wrap without horizontal overflow.
+
 Do:
 
 - reuse tokens and existing component selectors;

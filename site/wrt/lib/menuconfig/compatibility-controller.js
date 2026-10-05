@@ -106,7 +106,7 @@ function openKconfigPrerequisiteModal(option, value, error) {
     }
   };
   actions.append(cancel, apply);
-  body.appendChild(actions);
+  UI_COMPONENTS.mountUiModalActions(body, actions);
   modalCancelHandler = closeModal;
   return true;
 }
@@ -219,7 +219,7 @@ function openCatalogConflictModal(option, value, violations, openChildren = fals
   }
   body.append(list, warning);
   actions.append(cancel, apply);
-  body.appendChild(actions);
+  UI_COMPONENTS.mountUiModalActions(body, actions);
   apply.onclick = () => {
     if (catalogConflictPlanInvalid(plan, violations)) return;
     const snapshot = snapshotCatalogUiState();
@@ -438,7 +438,8 @@ function openConfigurationPreflightModal(evaluation) {
       confirm.type = 'button'; confirm.className = 'btn compatibility-force-confirm';
       confirm.textContent = t('runtime.383ef2ad4c67'); confirm.onclick = () => finish('forced');
       actions.append(back, confirm);
-      body.append(copy, actions);
+      body.appendChild(copy);
+      UI_COMPONENTS.mountUiModalActions(body, actions);
     };
     renderChoice = () => {
       modalCancelHandler = cancel;
@@ -590,7 +591,7 @@ function openConfigurationPreflightModal(evaluation) {
       const spacer = document.createElement('span');
       spacer.className = 'compatibility-actions-spacer'; spacer.setAttribute('aria-hidden', 'true');
       actions.append(force, customButton, spacer, cancelButton, recommended);
-      body.appendChild(actions);
+      UI_COMPONENTS.mountUiModalActions(body, actions);
     };
     renderChoice();
   });
@@ -645,6 +646,7 @@ function compatibilityContext(inputValues = configurationPreflightValues()) {
     sourceId: identity.sourceId,
     branchName: identity.branchName,
     sourceCommit: identity.sourceCommit,
+    inputsHash: String(MENU_CATALOG?.source?.inputsHash || ''),
     targetSystem,
     targetSubtarget,
     targetProfile,
@@ -938,15 +940,18 @@ function openCompatibilityWarningModal(evaluation, warning, plans) {
         code.textContent = preventive ? t('compatibility.preventive.label') : t('runtime.6b4cd2636bff');
         paths.appendChild(code);
       }
-      const metadata = document.createElement('p');
-      metadata.className = 'compatibility-evidence';
+      const evidence = document.createElement('details');
+      evidence.className = 'compatibility-evidence';
+      const metadata = document.createElement('summary');
       metadata.textContent = [
         `${t('runtime.7d39a1536cbf')} ${warning.rule.id}`,
         ...(warning.rule.failure ? [displayText(`${warning.rule.failure.cause} · ${warning.rule.failure.code}`)] : []),
-        `${t('runtime.b95bb82a0431')} ${displayText(evidenceRefs.join(' · '))}`,
       ].join(' · ');
-      summaryLine.append(pathLabel, metadata);
-      card.append(heading, copy, summaryLine, paths);
+      const refs = document.createElement('p');
+      refs.textContent = `${t('runtime.b95bb82a0431')} ${displayText(evidenceRefs.join(' · '))}`;
+      evidence.append(metadata, refs);
+      summaryLine.append(pathLabel);
+      card.append(heading, copy, summaryLine, paths, evidence);
       body.appendChild(card);
     };
 
@@ -975,7 +980,7 @@ function openCompatibilityWarningModal(evaluation, warning, plans) {
         onClick: () => finish(rememberInput.checked ? 'forced-remember' : 'forced'),
       });
       actions.append(rememberChoice, backButton, confirmForceButton);
-      body.appendChild(actions);
+      UI_COMPONENTS.mountUiModalActions(body, actions);
     };
 
     renderChoice = () => {
@@ -1084,6 +1089,7 @@ function openCompatibilityWarningModal(evaluation, warning, plans) {
       const recommendationTargets = plans.recommended?.requiredTargets?.length
         ? plans.recommended.requiredTargets
         : recommendationSteps;
+      const retainedTargets = plans.recommended?.retainedTargets || [];
       const recommendationActions = [...recommendationSteps];
       const recommendationActionSymbols = new Set(recommendationActions.map((step) => step.symbol));
       for (const target of recommendationTargets) {
@@ -1101,6 +1107,13 @@ function openCompatibilityWarningModal(evaluation, warning, plans) {
       recommendationAction.textContent = plans.recommended ? (recommendationTargetNames.length > 1 ? t('runtime.3a95242a9e37', { value1: recommendationTargetNames.join(' → ') }) : t('runtime.0dd63352cbe4', { value1: recommendationTargetNames[0] || displayText(plans.recommended.package) })) : t('runtime.f5967ef961bf');
       const recommendationDetail = document.createElement('small');
       recommendationDetail.className = 'compatibility-recommendation-detail';
+      if (retainedTargets.length) {
+        const retained = document.createElement('code');
+        retained.className = 'compatibility-retained';
+        retained.textContent = retainedTargets.map((target) =>
+          `${displayText(target.package)}=${target.value.toUpperCase()}`).join(' · ');
+        recommendation.appendChild(retained);
+      }
       const automaticDetail = automaticChangeNames.length ? t('menu.automaticLinkage', {
         list: formatList(automaticChangeNames),
       }) : '';
@@ -1136,6 +1149,13 @@ function openCompatibilityWarningModal(evaluation, warning, plans) {
       recommendedButton.disabled = !plans.recommended || recommendationApplied;
       recommendedButton.onclick = () => applyAndVerify(async (operation) => {
         for (const symbol of plans.recommended?.dependencySymbols || []) catalogDependencySymbols.add(symbol);
+        // Keep unchanged retained participants as explicit intent before
+        // cancelling selectors; otherwise orphan/default cleanup can drop Y.
+        for (const target of retainedTargets) {
+          await operation.checkpoint();
+          applyCatalogIntent(menuOptionBySymbol.get(target.symbol) || { symbol: target.symbol },
+            target.value, false, 'user');
+        }
         for (const step of recommendationActions) {
           await operation.checkpoint();
           const value = step.value || 'n';
@@ -1143,7 +1163,7 @@ function openCompatibilityWarningModal(evaluation, warning, plans) {
           applyCatalogIntent(menuOptionBySymbol.get(step.symbol) || { symbol: step.symbol },
             value, false, 'user');
         }
-      }, { keepOpen: true, requiredTargets: recommendationTargets });
+      }, { keepOpen: true, requiredTargets: [...recommendationTargets, ...retainedTargets] });
       customButton = document.createElement('button');
       customButton.type = 'button';
       customButton.className = 'btn compatibility-custom';
@@ -1174,7 +1194,7 @@ function openCompatibilityWarningModal(evaluation, warning, plans) {
       actionsSpacer.className = 'compatibility-actions-spacer';
       actionsSpacer.setAttribute('aria-hidden', 'true');
       actions.append(forceButton, customButton, actionsSpacer, cancelButton, recommendedButton);
-      body.appendChild(actions);
+      UI_COMPONENTS.mountUiModalActions(body, actions);
       refresh();
     };
     renderChoice();

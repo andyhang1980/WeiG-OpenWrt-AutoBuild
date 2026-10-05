@@ -1504,7 +1504,7 @@ export function createCatalogModel(catalog) {
         if (bySymbol.has(alias)) addDependent(alias, record.configSymbol);
       }
     }
-    for (const dependency of record.packageInfo?.depends || []) {
+    for (const dependency of allPackageDependencies(record)) {
       const names = [...(dependency.packages || []), ...(dependency.targets || []).map((row) =>
         typeof row === 'object' ? row.name || row.raw || '' : row)];
       for (const name of names) for (const target of packageProviders.get(packageCapabilityName(name)) || []) {
@@ -2145,12 +2145,28 @@ function packageProviderRecords(model, name, { excludePackage = '' } = {}) {
 }
 
 function packageSatisfied(model, name, values, options = {}) {
-  return packageProviderRecords(model, name, options).some((record) => recordEnabled(record, values));
+  return packageProviderRecords(model, name, options).some((record) =>
+    options.installed ? recordInstalled(record, values) : recordEnabled(record, values));
+}
+
+function allPackageDependencies(record) {
+  const dependencies = record.packageInfo?.depends || [];
+  const runtime = record.packageInfo?.installation?.runtime;
+  if (runtime?.schema !== 1 || !runtime.dependencies?.length) return dependencies;
+  return [...dependencies, ...runtime.dependencies.map(row => ({ ...row, installed: true }))];
 }
 
 function packageDependencyViolations(model, record, values, options) {
   const violations = [];
-  for (const dependency of record.packageInfo?.depends || []) {
+  const runtime = record.packageInfo?.installation?.runtime;
+  if (recordInstalled(record, values) && runtime?.schema === 1 && runtime.unresolved?.length &&
+      options.deferred !== 'ignore') {
+    violations.push({ code: 'package-dependency-deferred', symbol: record.configSymbol,
+      package: record.package, dependency: runtime.unresolved.join(', '), packages: [],
+      deferred: true, installation: true, reason: 'unsupported-installation-dependency' });
+  }
+  for (const dependency of allPackageDependencies(record)) {
+    if (dependency.installed && !recordInstalled(record, values)) continue;
     if (!dependency?.required || !dependency.packages?.length) continue;
     if (dependency.condition) {
       const condition = evaluateExpressionRaw(dependency.condition, values, options);
@@ -2163,7 +2179,8 @@ function packageDependencyViolations(model, record, values, options) {
       }
     }
     const enforceable = dependency.packages.filter((name) => enforceablePackage(model, name));
-    if (dependency.packages.some((name) => packageSatisfied(model, name, values))) continue;
+    if (dependency.packages.some((name) => packageSatisfied(model, name, values,
+      { installed: dependency.installed }))) continue;
     if (!enforceable.length) {
       const absent = dependency.packages.every((name) => !packageProviderRecords(model, name).length);
       if (absent && model.packageClosureComplete === true && model.packageClosureValidation.metadataComplete === true) {
@@ -2178,7 +2195,8 @@ function packageDependencyViolations(model, record, values, options) {
       continue;
     }
     violations.push({ code: 'package-dependency-unsatisfied', symbol: record.configSymbol, package: record.package,
-      dependency: dependency.raw || dependency.packages.join(' || '), packages: dependency.packages });
+      dependency: dependency.raw || dependency.packages.join(' || '), packages: dependency.packages,
+      ...(dependency.installed ? { installation: true } : {}) });
   }
   return violations;
 }
@@ -2577,16 +2595,18 @@ function applyDirectKconfigDependencies(model, record, requested, values, change
 }
 
 function applyDirectPackageDependencies(model, record, requested, values, changes, options = {}) {
-  for (const dependency of record.packageInfo?.depends || []) {
+  for (const dependency of allPackageDependencies(record)) {
+    if (dependency.installed && requested !== 'y') continue;
     if (!dependency?.required || dependency.packages?.length !== 1) continue;
     if (dependency.condition && evaluateExpressionRaw(dependency.condition, values, options) !== 2) continue;
     const name = dependency.packages[0];
-    if (packageSatisfied(model, name, values)) continue;
-    const candidates = [model.byPackage.get(name), ...(model.providers.get(name) || []).map((provider) => model.byPackage.get(provider))]
+    if (packageSatisfied(model, name, values, { installed: dependency.installed })) continue;
+    const candidates = packageProviderRecords(model, name)
       .filter((target) => target?.kconfigSymbol && target.states?.length);
     if (candidates.length !== 1) continue;
     const target = candidates[0];
-    setValue(values, changes, target.configSymbol, enabledState(model, target, requested, values, options),
+    setValue(values, changes, target.configSymbol, enabledState(model, target,
+      dependency.installed ? 'y' : requested, values, options),
       'package-dependency', record.configSymbol);
   }
 }
@@ -3575,6 +3595,7 @@ const COMPATIBILITY_RULE_KEYS_V3 = new Set([...COMPATIBILITY_RULE_KEYS_V2, 'sour
 const COMPATIBILITY_RULE_KEYS_V4 = new Set([...COMPATIBILITY_RULE_KEYS_V3, 'buildDependency']);
 const COMPATIBILITY_RULE_KEYS_V5 = new Set([...COMPATIBILITY_RULE_KEYS_V4, 'policy', 'environments', 'evidence']);
 const COMPATIBILITY_RULE_KEYS_V6 = new Set([...COMPATIBILITY_RULE_KEYS_V5, 'preferredDisable']);
+const COMPATIBILITY_RULE_KEYS_V7 = new Set([...COMPATIBILITY_RULE_KEYS_V6, 'preservePackages', 'inputHashes']);
 // `triggerPackages` is retained only for reading already-published legacy
 // rules.  New rules describe the failed package and derive active triggers
 // from the exact Catalog graph, so a manually maintained trigger list can no
@@ -3582,7 +3603,7 @@ const COMPATIBILITY_RULE_KEYS_V6 = new Set([...COMPATIBILITY_RULE_KEYS_V5, 'pref
 const COMPATIBILITY_BUILD_DEPENDENCY_KEYS = new Set(['package', 'triggerPackages']);
 const COMPATIBILITY_ENVIRONMENT_KEYS = new Set(['source', 'branch', 'packageAvailability', 'targetScope']);
 const COMPATIBILITY_EVIDENCE_KEYS = new Set(['source', 'branch', 'sourceCommit', 'targetScope', 'refs']);
-const COMPATIBILITY_SCHEMAS = new Set([2, 3, 4, 5, 6]);
+const COMPATIBILITY_SCHEMAS = new Set([2, 3, 4, 5, 6, 7]);
 const COMPATIBILITY_TARGET_SCOPE_KEYS = new Set(['system', 'subtarget', 'profile']);
 const COMPATIBILITY_FAILURE_KEYS = new Set(['phase', 'cause', 'code', 'observed']);
 const COMPATIBILITY_ID_RE = /^[A-Z][A-Z0-9-]{2,31}$/;
@@ -3590,6 +3611,7 @@ const COMPATIBILITY_PACKAGE_RE = /^[A-Za-z0-9][A-Za-z0-9+_.@-]{0,95}$/;
 const COMPATIBILITY_SOURCE_RE = /^(?:\*|[A-Za-z0-9_.-]{1,64})$/;
 const COMPATIBILITY_BRANCH_RE = /^(?:[A-Za-z0-9._/-]{1,160}|[A-Za-z0-9._/-]*\*[A-Za-z0-9._/-]*)$/;
 const COMPATIBILITY_COMMIT_RE = /^[a-f0-9]{40}$/;
+const COMPATIBILITY_INPUT_HASH_RE = /^[a-f0-9]{64}$/;
 const COMPATIBILITY_TARGET_RE = /^[A-Za-z0-9_+@./-]{1,160}$/;
 const COMPATIBILITY_FAILURE_CODE_RE = /^[a-z][a-z0-9-]{2,95}$/;
 const COMPATIBILITY_OBSERVED_KEY_RE = /^[A-Za-z][A-Za-z0-9]{0,63}$/;
@@ -3750,7 +3772,7 @@ export function normalizeCompatibilityDocument(raw) {
   if (!compatibilityObject(raw)) throw compatibilityError('compatibility document must be an object');
   compatibilityKeys(raw, COMPATIBILITY_DOCUMENT_KEYS, 'compatibility document');
   const schema = Number(raw.schema);
-  if (!COMPATIBILITY_SCHEMAS.has(schema) || !Array.isArray(raw.rules)) throw compatibilityError('compatibility document requires schema 2, 3, 4, 5, or 6 and a rules array');
+  if (!COMPATIBILITY_SCHEMAS.has(schema) || !Array.isArray(raw.rules)) throw compatibilityError('compatibility document requires schema 2, 3, 4, 5, 6, or 7 and a rules array');
   if (new TextEncoder().encode(JSON.stringify(raw)).byteLength > 512 * 1024) throw compatibilityError('compatibility document is too large');
   const ids = new Set();
   const rules = raw.rules.map((rule, index) => {
@@ -3758,7 +3780,8 @@ export function normalizeCompatibilityDocument(raw) {
     if (!compatibilityObject(rule)) throw compatibilityError(`${label} must be an object`);
     const allowedRuleKeys = schema === 2 ? COMPATIBILITY_RULE_KEYS_V2 :
       schema === 3 ? COMPATIBILITY_RULE_KEYS_V3 :
-        schema === 4 ? COMPATIBILITY_RULE_KEYS_V4 : schema === 5 ? COMPATIBILITY_RULE_KEYS_V5 : COMPATIBILITY_RULE_KEYS_V6;
+        schema === 4 ? COMPATIBILITY_RULE_KEYS_V4 : schema === 5 ? COMPATIBILITY_RULE_KEYS_V5 :
+          schema === 6 ? COMPATIBILITY_RULE_KEYS_V6 : COMPATIBILITY_RULE_KEYS_V7;
     compatibilityKeys(rule, allowedRuleKeys, label);
     const id = String(rule.id || '').trim();
     if (!COMPATIBILITY_ID_RE.test(id) || ids.has(id)) throw compatibilityError(`${label}.id is invalid or duplicate`);
@@ -3799,10 +3822,25 @@ export function normalizeCompatibilityDocument(raw) {
     if (schema >= 3 && rule.sourceCommits !== undefined) {
       normalized.sourceCommits = compatibilityStrings(rule.sourceCommits, `${id}.sourceCommits`, COMPATIBILITY_COMMIT_RE, 1, 32);
     }
+    if (rule.inputHashes !== undefined) {
+      if (preventive || !normalized.sourceCommits?.length) {
+        throw compatibilityError(`${id}.inputHashes requires an exact sourceCommits rule`);
+      }
+      normalized.inputHashes = compatibilityStrings(rule.inputHashes, `${id}.inputHashes`, COMPATIBILITY_INPUT_HASH_RE, 1, 32);
+    }
     if (rule.preferredDisable !== undefined) {
       normalized.preferredDisable = compatibilityStrings(rule.preferredDisable, `${id}.preferredDisable`, COMPATIBILITY_PACKAGE_RE, 1, 16);
       if (rule.buildDependency || normalized.preferredDisable.some((name) => !normalized.packages.includes(name))) {
         throw compatibilityError(`${id}.preferredDisable requires ordinary rule participants`);
+      }
+    }
+    if (rule.preservePackages !== undefined) {
+      normalized.preservePackages = compatibilityStrings(rule.preservePackages,
+        `${id}.preservePackages`, COMPATIBILITY_PACKAGE_RE, 1, 16);
+      if (rule.buildDependency || normalized.match !== 'all-installed' ||
+          normalized.preservePackages.some((name) => !normalized.packages.includes(name) ||
+            normalized.preferredDisable?.includes(name))) {
+        throw compatibilityError(`${id}.preservePackages requires non-disabled all-installed participants`);
       }
     }
     if (schema >= 3 && rule.targetScope !== undefined) {
@@ -3933,10 +3971,12 @@ function compatibilityRuleTriggered(rule, records, values, options, triggerRecor
     .every((record) => compatibilityRecordMatches(rule, record, values));
 }
 
-function compatibilityRuleScopeMismatch(rule, sourceCommit, target) {
+function compatibilityRuleScopeMismatch(rule, sourceCommit, target, inputsHash) {
   const mismatches = [];
   if (rule.sourceCommits && (!COMPATIBILITY_COMMIT_RE.test(sourceCommit) ||
       !rule.sourceCommits.includes(sourceCommit))) mismatches.push('sourceCommit');
+  if (rule.inputHashes && (!COMPATIBILITY_INPUT_HASH_RE.test(inputsHash) ||
+      !rule.inputHashes.includes(inputsHash))) mismatches.push('inputsHash');
   if (rule.targetScope && Object.entries(rule.targetScope).some(([key, values]) =>
     !values.includes(target[key]))) mismatches.push('targetScope');
   return mismatches;
@@ -3949,7 +3989,7 @@ function compatibilityEnvironmentMatches(environment, sourceId, branchName, targ
     values.includes(target[key]));
 }
 
-function compatibilityNearMatch(rule, sourceId, branchName, sourceCommit, target, records, values, mismatches) {
+function compatibilityNearMatch(rule, sourceId, branchName, sourceCommit, target, records, values, mismatches, inputsHash) {
   const matchedPackages = records
     .filter((record) => compatibilityRecordMatches(rule, record, values))
     .map((record) => record.package || packageNameFromSymbol(record.configSymbol))
@@ -3964,12 +4004,14 @@ function compatibilityNearMatch(rule, sourceId, branchName, sourceCommit, target
     matchedPackages: [...new Set(matchedPackages)],
     verified: {
       sourceCommits: rule.sourceCommits ? [...rule.sourceCommits] : [],
+      ...(rule.inputHashes ? { inputHashes: [...rule.inputHashes] } : {}),
       targetScope: rule.targetScope
         ? Object.fromEntries(Object.entries(rule.targetScope).map(([key, values]) => [key, [...values]]))
         : null,
     },
     current: {
       sourceCommit,
+      ...(rule.inputHashes ? { inputsHash } : {}),
       targetScope: { ...target },
     },
   };
@@ -3988,6 +4030,7 @@ export function evaluateNormalizedCompatibilityRules(model, normalized, inputVal
   }
   const sourceId = String(context.sourceId || ''), branchName = String(context.branchName || '');
   const sourceCommit = String(context.sourceCommit || '').toLowerCase();
+  const inputsHash = String(context.inputsHash || '').toLowerCase();
   const target = {
     system: String(context.targetSystem || ''),
     subtarget: String(context.targetSubtarget || ''),
@@ -4009,7 +4052,7 @@ export function evaluateNormalizedCompatibilityRules(model, normalized, inputVal
       if (!branchPatterns.some((pattern) => compatibilityPatternMatches(branchName, pattern))) continue;
     }
     const mismatches = rule.policy === 'preventive' ? [] :
-      compatibilityRuleScopeMismatch(rule, sourceCommit, target);
+      compatibilityRuleScopeMismatch(rule, sourceCommit, target, inputsHash);
     const ifPresent = environment?.packageAvailability === 'if-present';
     const missingPackages = [];
     const records = rule.packages.map((packageName) => {
@@ -4066,7 +4109,7 @@ export function evaluateNormalizedCompatibilityRules(model, normalized, inputVal
     }
     if (packageMatch && mismatches.length) {
       diagnostics.push(compatibilityNearMatch(rule, sourceId, branchName, sourceCommit,
-        target, allRecords, values, mismatches));
+        target, allRecords, values, mismatches, inputsHash));
     } else if (packageMatch) {
       warnings.push({ rule, records: allRecords, directRecords: records, triggerRecords,
         buildDependencyRecord, values });
@@ -4375,7 +4418,7 @@ function expressionAstDependencyProof(ast, inputValues, options = {}) {
         value: child.level === UNKNOWN ? UNKNOWN : child.level > 0 ? 'n' : 'y',
         // A negative condition being true because its symbol is N does not
         // make that symbol a package prerequisite.
-        symbols: new Set(), requiredSymbols: new Set(), ambiguous: child.ambiguous };
+        symbols: new Set(), requiredSymbols: new Set(), ambiguous: child.level === UNKNOWN };
     }
     if (node.kind === 'compare') {
       const left = expressionAstDependencyProof(node.left, inputValues, options);
@@ -4511,7 +4554,7 @@ function expressionDependencyProof(expression, inputValues, options = {}) {
   };
   const unary = () => {
     if (tokens[at] === '!') { at++; const value = unary(); return { level: value.level === UNKNOWN ? UNKNOWN : 2 - value.level,
-      symbols: new Set(), requiredSymbols: new Set(), ambiguous: value.ambiguous }; }
+      symbols: new Set(), requiredSymbols: new Set(), ambiguous: value.level === UNKNOWN }; }
     return primary();
   };
   const and = () => { let value = unary(); while (tokens[at] === '&&') { at++; value = combineAnd(value, unary()); } return value; };
@@ -4586,7 +4629,8 @@ function activePackageGraph(model, values, options = {}, includeInactive = false
     if (!record?.package || !record.configSymbol || (!includeInactive && !recordEnabled(record, values))) continue;
     const source = record.package;
     graph.set(source, graph.get(source) || new Set());
-    for (const dependency of record.packageInfo?.depends || []) {
+    for (const dependency of allPackageDependencies(record)) {
+      if (dependency.installed && !includeInactive && !recordInstalled(record, values)) continue;
       addActiveDependencyEdge(source, dependency);
     }
     // The narrow package-closure contract is sufficient for exact
@@ -4826,22 +4870,56 @@ export function deriveCompatibilityPlans(model, inputValues, warning, intent = {
   const startingValues = warning?.values || inputValues;
   if (!rule || records.length < 1) throw compatibilityError('compatibility warning is incomplete');
   if (rule.buildDependency) return deriveBuildDependencyPlans(model, inputValues, warning, intent);
+  const initial = valuesMap(startingValues);
+  const retainedTargets = (rule.preservePackages || []).map((name) => {
+    const record = model.byPackage.get(name);
+    return { symbol: record?.configSymbol || '', package: name,
+      value: normalizeValue(initial.get(record?.configSymbol) ?? 'n') };
+  });
+  // Retention constrains this recommendation, not every future user choice.
+  // The application transaction records the same retained explicit intent.
+  if (retainedTargets.some((target) => !target.symbol || target.value !== 'y')) {
+    return { candidates: [], recommended: null, preferredUnavailable: true };
+  }
+  const retainedSymbols = new Set(retainedTargets.map((target) => target.symbol));
+  const retainedIntent = retainedTargets.length ? {
+    ...intent,
+    protectedSymbols: new Set([...(intent.protectedSymbols || []), ...retainedSymbols]),
+    explicitSymbols: new Set([...(intent.explicitSymbols || []), ...retainedSymbols]),
+    preferredValues: new Map([...valuesMap(intent.preferredValues || {}), ...retainedTargets.map((target) =>
+      [target.symbol, target.value])]),
+  } : intent;
+  let retainedValues = new Map(initial);
+  const retentionChanges = [];
+  try {
+    for (const target of retainedTargets) {
+      const result = applyUserIntent(model, retainedValues,
+        { ...retainedIntent, symbol: target.symbol, value: target.value });
+      retainedValues = result.values;
+      retentionChanges.push(...result.changes);
+    }
+  } catch {
+    return { candidates: [], recommended: null, preferredUnavailable: true };
+  }
   const candidates = [];
   for (const record of records) {
-    if (!record.canDisable) continue;
+    if (!record.canDisable || retainedSymbols.has(record.configSymbol)) continue;
     try {
-      const plan = compatibilityDisablePlan(model, record, startingValues, intent);
+      const plan = compatibilityDisablePlan(model, record, retainedValues, retainedIntent);
       if (!plan?.steps.length) continue;
+      if (retainedTargets.some((target) => normalizeValue(plan.values.get(target.symbol) ?? 'n') !== target.value)) continue;
       const resolved = !compatibilityWarningTriggered(model, { ...warning, values: plan.values }, plan.values,
         intent.validationOptions || {});
       if (!resolved) continue;
       const stepSymbols = new Set(plan.steps.map((step) => step.symbol));
+      const changes = compatibilityPlanChanges(initial, plan.values, [...retentionChanges, ...plan.changes]);
       candidates.push({
         package: record.package,
         symbol: record.configSymbol,
         steps: plan.steps,
-        changes: plan.changes,
-        automaticChanges: plan.changes.filter((change) => !stepSymbols.has(change.symbol)),
+        retainedTargets,
+        changes,
+        automaticChanges: changes.filter((change) => !stepSymbols.has(change.symbol)),
         values: plan.values,
         cost: plan.steps.length,
       });

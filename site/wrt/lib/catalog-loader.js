@@ -370,9 +370,10 @@ function validateIndex(index, dataRef, repository) {
 }
 
 function compatibilityContract(index) {
-  const modern = Object.hasOwn(index?.assets || {}, 'compatibilityV6');
-  const contract = modern ? index.assets.compatibilityV6 : index?.assets?.compatibility;
-  const asset = modern ? 'compatibility.v6.json.gz' : 'compatibility.json.gz';
+  const version = Object.hasOwn(index?.assets || {}, 'compatibilityV7') ? 7 :
+    Object.hasOwn(index?.assets || {}, 'compatibilityV6') ? 6 : 0;
+  const contract = version ? index.assets[`compatibilityV${version}`] : index?.assets?.compatibility;
+  const asset = version ? `compatibility.v${version}.json.gz` : 'compatibility.json.gz';
   const schema = Number(contract?.schema);
   if (!contract || safeCatalogAsset(contract.asset) !== asset ||
       !/^[a-f0-9]{64}$/.test(String(contract.hash || '')) ||
@@ -380,7 +381,7 @@ function compatibilityContract(index) {
       Number(contract.bytes) > MAX_COMPATIBILITY_JSON_BYTES + 1024 ||
       !Number.isSafeInteger(Number(contract.jsonBytes)) || Number(contract.jsonBytes) <= 0 ||
       Number(contract.jsonBytes) > MAX_COMPATIBILITY_JSON_BYTES ||
-      !(modern ? [6] : [2, 3, 4, 5]).includes(schema) || !Number.isSafeInteger(Number(contract.rules)) || Number(contract.rules) < 0) {
+      !(version ? [version] : [2, 3, 4, 5]).includes(schema) || !Number.isSafeInteger(Number(contract.rules)) || Number(contract.rules) < 0) {
     throw new Error('Catalog index lacks a valid compatibility asset contract');
   }
   return {
@@ -412,7 +413,7 @@ function applicationsContract(index) {
 
 function validateCompatibilityDocument(data, expected) {
   const actualJsonBytes = new TextEncoder().encode(JSON.stringify(data)).byteLength;
-  if (!data || ![2, 3, 4, 5, 6].includes(Number(data.schema)) || Number(data.schema) !== Number(expected.schema) || !Array.isArray(data.rules) ||
+  if (!data || ![2, 3, 4, 5, 6, 7].includes(Number(data.schema)) || Number(data.schema) !== Number(expected.schema) || !Array.isArray(data.rules) ||
       data.rules.length !== Number(expected.rules) || actualJsonBytes !== Number(expected.jsonBytes)) {
     throw new Error('Catalog compatibility document does not match its index contract');
   }

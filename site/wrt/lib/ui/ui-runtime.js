@@ -826,7 +826,7 @@ $('modalClose').addEventListener('click', closeModal);
 $('modal').addEventListener('click', (e) => { if (e.target === $('modal')) closeModal(); });
 $('modal').addEventListener('keydown', (e) => {
   if (e.key !== 'Tab') return;
-  const els = [...$('modal').querySelectorAll('button, a[href], input, textarea, select')].filter((el) => !el.disabled && el.offsetParent !== null);
+  const els = [...$('modal').querySelectorAll('button, a[href], input, textarea, select, summary')].filter((el) => !el.disabled && el.offsetParent !== null);
   if (!els.length) return;
   const first = els[0], last = els[els.length - 1];
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }

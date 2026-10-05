@@ -218,7 +218,11 @@ html[data-theme="light"] .import-source-field .target-select { color-scheme: lig
 }
 .generation-error-hint { margin-top: 13px !important; color: var(--text2); font-size: var(--font-description); line-height: 1.6; }
 .modal.generation-error .modal-actions { justify-content: flex-end; }
-.modal.catalog-conflict{max-width:720px;overflow:hidden;box-shadow:0 24px 72px rgba(0,0,0,.34)}
+.modal.catalog-conflict{max-width:900px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 72px rgba(0,0,0,.34)}
+.modal.catalog-conflict .modal-head{flex:none;min-width:0;gap:8px}
+.modal.catalog-conflict .modal-body{display:flex;flex-direction:column;min-height:0;overflow:hidden;padding:0}
+.modal-scroll-content{min-height:0;overflow:auto;overscroll-behavior:contain;padding:16px 18px;overflow-wrap:anywhere}
+.modal-body>.modal-actions{flex:none;margin:0;padding:12px 18px;border-top:1px solid var(--border);background:var(--surface-raised)}
 .modal.catalog-conflict .modal-head{background:color-mix(in srgb,var(--warn) 8%,var(--card))}
 .catalog-conflict-copy{margin:0 0 12px;color:var(--text2);font-size:var(--font-description);line-height:1.6}
 .catalog-conflict-list{display:grid;gap:8px;max-height:min(48vh,430px);max-height:min(48dvh,430px);overflow:auto;overscroll-behavior:contain}
@@ -244,7 +248,9 @@ html[data-theme="light"] .import-source-field .target-select { color-scheme: lig
 .compatibility-path-label{color:var(--text2);font-size:var(--font-description);font-weight:700;line-height:1.55}
 .compatibility-paths{display:grid;gap:5px}
 .compatibility-paths code{display:block;padding:7px 9px;border:1px solid color-mix(in srgb,var(--warn) 24%,var(--border));border-radius:7px;background:color-mix(in srgb,var(--card) 78%,transparent);color:var(--text);font-size:var(--font-description);line-height:1.55;white-space:normal;overflow-wrap:anywhere}
-.compatibility-evidence{min-width:0;margin:0 0 0 auto;color:var(--text2);font-size:var(--font-description);line-height:1.55;text-align:right;overflow-wrap:anywhere}
+.compatibility-evidence{min-width:0;color:var(--text2);font-size:var(--font-description);line-height:1.55;overflow-wrap:anywhere}
+.compatibility-evidence summary{cursor:pointer}
+.compatibility-retained{overflow-wrap:anywhere;color:var(--text)}
 .compatibility-recommendation{display:grid;gap:3px;margin:10px 0 4px;padding:11px 13px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--border));border-radius:9px;background:color-mix(in srgb,var(--accent) 8%,var(--card2));color:var(--text);overflow-wrap:anywhere}
 .compatibility-recommendation-title{color:var(--accent-text);font-size:var(--font-item-title)}
 .compatibility-recommendation-action{font-size:var(--font-item-title);font-weight:700;line-height:1.45}

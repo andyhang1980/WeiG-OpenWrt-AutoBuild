@@ -30,6 +30,15 @@ export function createUiActionRow(className = '') {
   return row;
 }
 
+// Reusable modal shell: a bounded scroll region and a non-scrolling footer.
+// Call after rendering content. Re-renderers already clear modalBody.
+export function mountUiModalActions(body, actions) {
+  const content = document.createElement('div');
+  content.className = 'modal-scroll-content';
+  while (body.firstChild) content.appendChild(body.firstChild);
+  body.replaceChildren(content, actions);
+}
+
 export function createUiButton({ text = '', className = 'btn', title = '', onClick = null } = {}) {
   const button = document.createElement('button');
   button.type = 'button';

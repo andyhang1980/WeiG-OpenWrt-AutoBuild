@@ -2554,7 +2554,7 @@ expectThrow(() => normalizeCompatibilityDocument({ ...buildDependencyRule, schem
   'schema-3 compatibility accepted buildDependency');
 expectThrow(() => normalizeCompatibilityDocument({ ...buildDependencyRule, schema: 2 }), /requires compatibility schema 4|unsupported field/i,
   'schema-2 compatibility accepted buildDependency');
-expectThrow(() => normalizeCompatibilityDocument({ ...buildDependencyRule, schema: 7 }), /schema 2, 3, 4, 5, or 6/i,
+expectThrow(() => normalizeCompatibilityDocument({ ...buildDependencyRule, schema: 8 }), /schema 2, 3, 4, 5, 6, or 7/i,
   'unknown compatibility schema was accepted');
 
 const preventiveBuildDependencyRule = {

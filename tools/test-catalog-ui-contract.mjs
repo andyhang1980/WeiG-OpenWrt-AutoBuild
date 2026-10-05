@@ -290,7 +290,8 @@ expect(app.includes('const recommendationSteps = plans.recommended?.steps?.lengt
   app.includes("t('runtime.3a95242a9e37', { value1: recommendationTargetNames.join(' → ') })") &&
   app.includes("t('menu.automaticLinkage', {") &&
   app.includes('for (const step of recommendationActions) {') &&
-  app.includes('requiredTargets: recommendationTargets') &&
+  app.includes('requiredTargets: [...recommendationTargets, ...retainedTargets]') &&
+  app.includes('const retainedTargets = plans.recommended?.retainedTargets || []') &&
   app.includes('compatibilityTargetsResolved(requiredTargets)') &&
   app.includes('applyCatalogIntent(menuOptionBySymbol.get(step.symbol) || { symbol: step.symbol },') &&
   !app.includes('warning.records.find((item) => item.configSymbol === plans.recommended.symbol)'),
