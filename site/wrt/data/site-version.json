@@ -8,8 +8,8 @@
     "catalog-dev": {
       "channel": "catalog-dev",
       "repository": "weigefenxiang/WeiG-OpenWrt-Menuconfig-Catalog",
-      "codeSha": "0d9885d1a6d7309d573c7711155057d96b83c094",
-      "assetRef": "da52051a0498e557e7a18ab1bdb38f8d43f28210"
+      "codeSha": "8db33d5a0bfec5bab8b648d121bcb64db969f7be",
+      "assetRef": "77bef2fd0834a2c06f83ba7179a8f778027f6472"
     },
     "catalog-staging": {
       "channel": "catalog-staging",
