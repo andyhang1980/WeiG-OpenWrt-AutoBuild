@@ -181,4 +181,26 @@ for (const rule of compileFacts.rules) {
     new Map([['GCC_VERSION', rule.failure.observed.compilerVersion],
       ['PACKAGE_unrelated', 'y']]), context).warnings.length, 0);
 }
+const amuleFacts = JSON.parse(readFileSync(new URL('./fixtures/compatibility-amule-20261007.json', import.meta.url), 'utf8'));
+const amuleRule = amuleFacts.rules[0];
+const amuleModel = createCatalogModel({ schema: 6, relations: { schema: 2, indexes: {},
+  packageClosureComplete: true, packageClosureCapabilities: ['complete-package-build-closure-v1'],
+  records: [pkg('amule'), pkg('luci-app-amule', { packageInfo: { depends: [dependency('amule')] },
+    kconfig: { selectsExpressions: [['PACKAGE_amule']] } }), pkg('unrelated')] } });
+const amuleContext = { sourceId: 'ImmortalWrt', branchName: 'master', sourceCommit: amuleRule.sourceCommits[0],
+  inputsHash: amuleRule.inputHashes[0], targetSystem: 'x86', targetSubtarget: '64', targetProfile: 'DEVICE_generic' };
+for (const entry of ['amule', 'luci-app-amule']) for (const state of ['m', 'y']) {
+  const values = new Map([['PACKAGE_' + entry, state], ['PACKAGE_amule', state], ['PACKAGE_unrelated', 'y']]);
+  const warning = evaluateCompatibilityRules(amuleModel, amuleFacts, values, amuleContext).warnings[0];
+  assert(warning);
+  const plan = deriveCompatibilityPlans(amuleModel, values, warning).recommended;
+  assert(plan, 'exact compile fact has no legal dependency-root recommendation');
+  assert.equal(plan.values.get('PACKAGE_' + entry), 'n');
+  assert.equal(plan.values.get('PACKAGE_amule'), 'n'); assert.equal(plan.values.get('PACKAGE_unrelated'), 'y');
+  assert.equal(evaluateCompatibilityRules(amuleModel, amuleFacts, plan.values, amuleContext).warnings.length, 0);
+  for (const change of [{ sourceId: 'lede' }, { branchName: 'openwrt-25.12' },
+    { sourceCommit: 'f'.repeat(40) }, { inputsHash: 'f'.repeat(64) }, { targetSubtarget: 'generic' }]) {
+    assert.equal(evaluateCompatibilityRules(amuleModel, amuleFacts, values, { ...amuleContext, ...change }).warnings.length, 0);
+  }
+}
 console.log('Native runtime dependencies, retained participants, negative graph proofs and exact compile facts passed');

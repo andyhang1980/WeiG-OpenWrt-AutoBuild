@@ -2,6 +2,7 @@
  "version": 2,
  "language": "vi",
  "strings": {
+  "group.Other": "Khác",
   "busy.import": "Loading configuration…",
   "busy.processing": "Processing configuration…",
   "busy.progress": "Restoring selections {current}/{total}…",

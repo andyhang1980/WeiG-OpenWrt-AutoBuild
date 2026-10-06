@@ -478,30 +478,35 @@ function recordCatalogExplicitIntent(option, value) {
   menuTouched.add(option.symbol);
   return 'user';
 }
-function applyCatalogIntent(option, value, force = false, source = 'user') {
+function evaluateCatalogIntent(option, value, force = false, assignments = null) {
+  const context = catalogValidationContext(menuValues, 'interactive');
+  const protectedSymbols = catalogProtectedSymbols();
+  for (const [symbol, next] of new Map(assignments || [[option.symbol, value]])) {
+    if (next === 'n') protectedSymbols.delete(symbol);
+  }
+  return CATALOG_ENGINE.applyUserIntent(CATALOG_MODEL, context.values, {
+    symbol: option.symbol, value, force,
+    ...(assignments ? { assignments } : {}),
+    dependencySymbols: catalogDependencySymbols, protectedSymbols,
+    preferredValues: catalogPreferredValues(), explicitSymbols: catalogUserOverrides.keys(),
+    derivedSymbols: catalogConditionalDefaultSymbols, validationOptions: context.validationOptions,
+  });
+}
+function applyCatalogIntent(option, value, force = false, source = 'user', assignments = null) {
   if (!option) return { changes: [], violations: [] };
   const snapshot = snapshotCatalogUiState();
   const previous = menuValues.get(option.symbol) ?? 'n';
   try {
-    const context = catalogValidationContext(menuValues, 'interactive');
+    const direct = new Map(assignments || []);
+    direct.set(option.symbol, value);
     const result = (!CATALOG_MODEL || !CATALOG_ENGINE)
       ? { changes: [{ symbol: option.symbol, from: previous, to: value, reason: 'fallback' }], violations: [] }
-      : CATALOG_ENGINE.applyUserIntent(CATALOG_MODEL, context.values, {
-        symbol: option.symbol,
-        value,
-        force,
-        dependencySymbols: catalogDependencySymbols,
-        protectedSymbols: catalogProtectedSymbols(value === 'n' ? option.symbol : ''),
-        preferredValues: catalogPreferredValues(),
-        explicitSymbols: catalogUserOverrides.keys(),
-        derivedSymbols: catalogConditionalDefaultSymbols,
-        validationOptions: context.validationOptions,
-      });
+      : evaluateCatalogIntent(option, value, force, assignments);
     let directIntentChanged = false;
     for (const change of result.changes) {
       if (change.remove) menuValues.delete(change.symbol);
       else menuValues.set(change.symbol, change.to);
-      const explicit = change.symbol === option.symbol;
+      const explicit = direct.has(change.symbol);
       const conditionalDefault = !explicit && (['conditional-default', 'choice-default'].includes(change.reason) ||
         result.derivedSymbols?.has(change.symbol));
       const changedOption = menuOptionBySymbol.get(change.symbol);
@@ -539,20 +544,24 @@ function applyCatalogIntent(option, value, force = false, source = 'user') {
     // applyUserIntent call is still meaningful even though it returns no
     // value changes; record only this user call as direct Intent. The select
     // change above remains dependency-owned and is never promoted here.
-    if (source === 'user' && !result.changes.some((change) => change.symbol === option.symbol)) {
-      const beforeOverride = catalogUserOverrides.has(option.symbol)
-        ? catalogUserOverrides.get(option.symbol) : undefined;
-      const beforeTouched = menuTouched.has(option.symbol);
-      const beforeDependency = catalogDependencySymbols.has(option.symbol);
-      const curatedSource = recordCatalogExplicitIntent(option, value);
-      catalogConditionalDefaultSymbols.delete(option.symbol);
-      catalogDependencySymbols.delete(option.symbol);
-      syncMenuToCurated(option, menuValues.get(option.symbol) ?? value, curatedSource);
-      syncFirmwareThemeFromMenu(option, menuValues.get(option.symbol) ?? value);
-      directIntentChanged = beforeOverride !== (catalogUserOverrides.has(option.symbol)
-        ? catalogUserOverrides.get(option.symbol) : undefined) ||
-        beforeTouched !== menuTouched.has(option.symbol) ||
-        beforeDependency !== catalogDependencySymbols.has(option.symbol);
+    for (const [directSymbol, directValue] of direct) {
+      const directOption = menuOptionBySymbol.get(directSymbol);
+      if (!directOption) continue;
+      if (source === 'user' && !result.changes.some((change) => change.symbol === directSymbol)) {
+        const beforeOverride = catalogUserOverrides.has(directSymbol)
+          ? catalogUserOverrides.get(directSymbol) : undefined;
+        const beforeTouched = menuTouched.has(directSymbol);
+        const beforeDependency = catalogDependencySymbols.has(directSymbol);
+        const curatedSource = recordCatalogExplicitIntent(directOption, directValue);
+        catalogConditionalDefaultSymbols.delete(directSymbol);
+        catalogDependencySymbols.delete(directSymbol);
+        syncMenuToCurated(directOption, menuValues.get(directSymbol) ?? directValue, curatedSource);
+        syncFirmwareThemeFromMenu(directOption, menuValues.get(directSymbol) ?? directValue);
+        directIntentChanged ||= beforeOverride !== (catalogUserOverrides.has(directSymbol)
+          ? catalogUserOverrides.get(directSymbol) : undefined) ||
+          beforeTouched !== menuTouched.has(directSymbol) ||
+          beforeDependency !== catalogDependencySymbols.has(directSymbol);
+      }
     }
     if (result.changes.length || directIntentChanged) markCatalogStateChanged();
     return result;

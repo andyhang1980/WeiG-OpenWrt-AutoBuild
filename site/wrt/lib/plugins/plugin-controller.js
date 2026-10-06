@@ -176,7 +176,7 @@ window.addEventListener('resize', () => {
   }, 150);
 });
 
-/* 插件项只显示名字以保持列表紧凑；说明复用统一浮窗，悬停临时显示、双击固定 / Plugin rows stay compact; details reuse the shared hover/double-click tooltip. */
+/* Plugin cards toggle once per click; details reuse the shared hover/right-click tooltip. */
 function renderPlugin(p) {
   const st = pluginState(p);
   const adv = state.advanced;
@@ -209,6 +209,7 @@ function renderPlugin(p) {
     if (catalogOption) {
       const applied = setMenuValue(catalogOption, checked ? 'y' : 'n');
       if (!applied) cb.checked = curatedPluginChecked(p, st, catalogOption);
+      nameBtn.setAttribute('aria-pressed', String(cb.checked));
       return applied;
     }
     const selectedBefore = new Set(state.sel);
@@ -232,6 +233,7 @@ function renderPlugin(p) {
         if (required && required.id !== p.id) syncCuratedToMenu(required, 'y');
       }
     }
+    nameBtn.setAttribute('aria-pressed', String(cb.checked));
     updateStats();
     return true;
   };
@@ -289,10 +291,12 @@ function renderPlugin(p) {
   bindUiTooltipContent(item, { title: pName(p), body: tooltipBody });
   bindUiTooltipContent(nameBtn, { title: pName(p), body: tooltipBody });
   nameBtn.removeAttribute('title');
-  nameBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    showDatasetTooltip(nameBtn, e);
+  nameBtn.setAttribute('aria-pressed', String(cb.checked));
+  item.addEventListener('click', (event) => {
+    if (event.target === cb) return; // Native checkbox change already applies.
+    if (cb.disabled) { showDatasetTooltip(item, event); return; }
+    applyChecked(!cb.checked);
+    nameBtn.setAttribute('aria-pressed', String(cb.checked));
   });
   item.appendChild(nameBtn);
   return item;

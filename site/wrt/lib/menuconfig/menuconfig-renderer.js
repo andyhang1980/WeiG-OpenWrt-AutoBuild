@@ -15,6 +15,10 @@ function setMenuValue(option, value, openChildren = false) {
         openKconfigPrerequisiteModal(option, value, error)) return false;
     if (violations.some((item) => item.code === 'package-conflict' || item.code === 'choice-conflict') &&
         openCatalogConflictModal(option, value, violations, false)) return false;
+    if (error?.name === 'CatalogIntentError') {
+      openCatalogIntentDiagnostic(option, error);
+      return false;
+    }
     const first = displayText(String(error?.message || error).split(';')[0]);
     showToast(first.length > 240 ? `${first.slice(0, 237)}…` : first);
     return false;

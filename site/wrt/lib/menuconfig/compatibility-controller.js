@@ -91,11 +91,9 @@ function openKconfigPrerequisiteModal(option, value, error) {
   apply.onclick = () => {
     const snapshot = snapshotCatalogUiState();
     try {
-      for (const step of plan.steps) {
-        const stepOption = menuOptionBySymbol.get(step.symbol) || { symbol: step.symbol };
-        applyCatalogIntent(stepOption, step.value, false, 'user');
-      }
-      applyCatalogIntent(option, value, false, 'user');
+      const assignments = new Map(plan.steps.map((step) => [step.symbol, step.value]));
+      assignments.set(option.symbol, value);
+      applyCatalogIntent(option, value, false, 'user', assignments);
       renderCatalogUiAfterIntent(false, option, menuValues.get(option.symbol) ?? value);
       modalCancelHandler = null;
       closeModal();
@@ -119,6 +117,9 @@ function openCatalogConflictModal(option, value, violations, openChildren = fals
     if (row.symbol !== option.symbol && row.record.canDisable) plan.set(row.symbol, 'n');
   }
   plan.set(option.symbol, value);
+  const edited = new Set([option.symbol]);
+  const assignments = () => new Map([...plan].filter(([symbol, next]) =>
+    edited.has(symbol) || next !== (menuValues.get(symbol) ?? 'n')));
 
   modalCancelHandler = null;
   openModal(t('runtime.c2d6e325fc5b'));
@@ -149,21 +150,28 @@ function openCatalogConflictModal(option, value, violations, openChildren = fals
   apply.textContent = t('runtime.b62f9960932e');
   const refresh = () => {
     const context = catalogValidationContext(menuValues, 'interactive');
-    const values = new Map(context.values);
-    for (const [symbol, stateValue] of plan) values.set(symbol, stateValue);
+    let values = new Map(context.values);
+    let evaluationError = null;
+    try {
+      values = evaluateCatalogIntent(option, plan.get(option.symbol), false, assignments()).values;
+    } catch (error) {
+      evaluationError = error;
+      for (const [symbol, stateValue] of plan) values.set(symbol, stateValue);
+    }
     const constraintsBySymbol = new Map(rows.map((row) => [row.symbol,
       CATALOG_ENGINE.kconfigStateConstraints(CATALOG_MODEL, row.record, values, context.validationOptions)]));
-    const stateInvalid = rows.some((row) => {
+    const stateInvalid = Boolean(evaluationError) || rows.some((row) => {
       const constraints = constraintsBySymbol.get(row.symbol);
-      const stateRow = constraints.states.find((item) => item.value === plan.get(row.symbol));
+      const stateRow = constraints.states.find((item) => item.value === values.get(row.symbol));
       return !stateRow?.selectable && !(stateRow?.current && stateRow?.locked);
     });
-    const conflictInvalid = catalogConflictPlanInvalid(plan, violations);
+    const conflictInvalid = catalogConflictPlanInvalid(values, violations);
     const invalid = stateInvalid || conflictInvalid;
-    warning.textContent = stateInvalid ? t('runtime.0f352e4ef93f') : conflictInvalid ? t('runtime.25739b377862') : '';
+    warning.textContent = evaluationError ? displayText(evaluationError.message) :
+      stateInvalid ? t('runtime.0f352e4ef93f') : conflictInvalid ? t('runtime.25739b377862') : '';
     apply.disabled = invalid;
     list.querySelectorAll('.catalog-conflict-row').forEach((line) => {
-      const activeValue = plan.get(line.dataset.symbol) || 'n';
+      const activeValue = values.get(line.dataset.symbol) || 'n';
       line.classList.toggle('is-invalid', invalid && activeValue !== 'n');
       line.querySelectorAll('button[data-value]').forEach((button) => {
         const active = activeValue === button.dataset.value;
@@ -210,6 +218,7 @@ function openCatalogConflictModal(option, value, violations, openChildren = fals
           return;
         }
         plan.set(row.symbol, stateValue);
+        edited.add(row.symbol);
         refresh();
       };
       stateBox.appendChild(button);
@@ -221,16 +230,9 @@ function openCatalogConflictModal(option, value, violations, openChildren = fals
   actions.append(cancel, apply);
   UI_COMPONENTS.mountUiModalActions(body, actions);
   apply.onclick = () => {
-    if (catalogConflictPlanInvalid(plan, violations)) return;
     const snapshot = snapshotCatalogUiState();
     try {
-      for (const row of rows) {
-        if ((plan.get(row.symbol) || 'n') === 'n') applyCatalogIntent(row.option, 'n', false, 'user');
-      }
-      for (const row of rows) {
-        const next = plan.get(row.symbol) || 'n';
-        if (next !== 'n') applyCatalogIntent(row.option, next, false, 'user');
-      }
+      applyCatalogIntent(option, plan.get(option.symbol), false, 'user', assignments());
       modalCancelHandler = null;
       closeModal();
       renderCatalogUiAfterIntent(openChildren, option, plan.get(option.symbol) || 'n');
@@ -242,6 +244,32 @@ function openCatalogConflictModal(option, value, violations, openChildren = fals
   };
   refresh();
   return true;
+}
+
+// Non-repairable target restrictions and absent metadata providers still
+// deserve a persistent, copyable explanation, not a short-lived clipped toast.
+function openCatalogIntentDiagnostic(option, error) {
+  modalCancelHandler = null;
+  openModal(t('runtime.kconfigPrerequisiteTitle'));
+  const modal = $('modal').querySelector('.modal');
+  modal.classList.add('catalog-conflict');
+  const body = $('modalBody');
+  body.textContent = '';
+  const name = document.createElement('code');
+  name.textContent = displayConfigSymbol(option.symbol, { kind: 'config' });
+  const detail = document.createElement('p');
+  detail.className = 'catalog-conflict-warning';
+  detail.textContent = displayText(error.message);
+  const requirement = kconfigRequirementText(error.constraints?.dependencyExpressions || []);
+  if (requirement && !detail.textContent.includes(requirement)) detail.textContent += `\n${requirement}`;
+  body.append(name, detail);
+  const actions = document.createElement('div');
+  actions.className = 'modal-actions';
+  const close = document.createElement('button');
+  close.type = 'button'; close.className = 'btn'; close.textContent = t('btn.close');
+  close.onclick = closeModal;
+  actions.append(close);
+  UI_COMPONENTS.mountUiModalActions(body, actions);
 }
 
 function configurationPreflightValues() {

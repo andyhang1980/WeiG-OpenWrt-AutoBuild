@@ -2,6 +2,7 @@
  "version": 2,
  "language": "fr",
  "strings": {
+  "group.Other": "Autres",
   "busy.import": "Loading configuration…",
   "busy.processing": "Processing configuration…",
   "busy.progress": "Restoring selections {current}/{total}…",

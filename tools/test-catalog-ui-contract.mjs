@@ -409,7 +409,7 @@ expect(html.includes('class="ui-tooltip" id="uiTooltip"') &&
   html.includes('id="uiTooltipTitle"') && html.includes('id="uiTooltipEmphasis"') &&
   html.includes('id="uiTooltipBody"') &&
   !html.includes('id="menuTooltip"') && !html.includes('id="popover"') &&
-  css.includes('.ui-tooltip{position:fixed;z-index:var(--z-tooltip);width:max-content;max-width:min(66.6667vw,calc(100vw - 24px))') &&
+  css.includes('.ui-tooltip{position:fixed;z-index:var(--z-tooltip);width:max-content;max-width:min(50vw,calc(100vw - 24px))') &&
   css.includes('.ui-tooltip-emphasis{') && css.includes('color:var(--danger)') &&
   !css.includes('.menu-tooltip{') && !css.includes('.popover {') &&
   sharedTooltipContract.includes("const UI_TOOLTIP_SELECTOR = '[data-ui-tooltip-title],[data-ui-tooltip-emphasis],[data-ui-tooltip-body]'") &&
@@ -423,7 +423,8 @@ expect(html.includes('class="ui-tooltip" id="uiTooltip"') &&
    sharedTooltipContract.includes('function uiTooltipAvoidanceTarget(target)') &&
    sharedTooltipContract.includes('uiTooltip.style.width =') &&
    sharedTooltipContract.includes('const measureLayer = () =>') &&
-   sharedTooltipContract.includes('if (rendered.width > geometry.width + 1 || rendered.height > geometry.height + 1 || overlapsAvoid(rendered))') &&
+   sharedTooltipContract.includes('uiTooltip.offsetHeight') &&
+   sharedTooltipContract.includes('const retry = calculate(rendered)') &&
    sharedTooltipContract.includes('uiTooltip.dataset.placement = geometry.placement') &&
   sharedTooltipContract.includes("uiTooltip.style.removeProperty('max-height');") &&
   sharedTooltipContract.includes("uiTooltip.classList.toggle('is-pinned', uiTooltipPinned)") &&
@@ -431,6 +432,8 @@ expect(html.includes('class="ui-tooltip" id="uiTooltip"') &&
   sharedTooltipContract.includes('function bindUiTooltipContent(target') &&
   sharedTooltipContract.includes("document.addEventListener('pointermove'") &&
   sharedTooltipContract.includes("document.addEventListener('dblclick'") &&
+  sharedTooltipContract.includes("document.addEventListener('contextmenu'") &&
+  sharedTooltipContract.includes("if (!target || target.closest('.plugin')) return;") &&
   sharedTooltipContract.includes('showDatasetTooltip(target, event, true)') &&
   sharedTooltipContract.includes('function connectedUiTooltipTarget(target)') &&
   sharedTooltipContract.includes('now - uiTooltipClickAt <= 500') &&
@@ -468,7 +471,10 @@ expect(pluginRenderContract.includes('const applyChecked = (checked) => {') &&
   !pluginRenderContract.includes('if (curatedPluginChecked(p, st, catalogOption) && cb.checked) return;') &&
   !pluginRenderContract.includes('applyChecked(true);') &&
   !pluginRenderContract.includes('nameBtn.title = detail'),
-  'plugin card selection or shared double-click tooltip binding regressed');
+  pluginRenderContract.includes("item.addEventListener('click'") &&
+  pluginRenderContract.includes('if (event.target === cb) return;') &&
+  pluginRenderContract.includes('applyChecked(!cb.checked)'),
+  'plugin card selection or shared right-click tooltip binding regressed');
 const originSlotContract = app.match(/function renderCatalogOriginSlot\(option, origin\) \{[\s\S]*?\n\}/)?.[0] || '';
 expect(app.includes("kind: 'user', label: t('runtime.3a8e2a20d9e6')") &&
   app.includes("kind: 'user-exclude', label: t('runtime.97312fbcf425')") &&
@@ -828,13 +834,13 @@ expect(intentContract.includes('catalogUserOverrides.has(option.symbol)') &&
   intentContract.includes("? 'excluded' : 'selected'") &&
   intentContract.includes("return state.sel.has(plugin.id) ? 'selected' : 'none'"),
   'Catalog and legacy curated intent authorities are not explicit');
-const intentApplyContract = app.match(/function applyCatalogIntent\(option, value, force = false, source = 'user'\) \{([\s\S]*?)\n\}/)?.[1] || '';
+const intentApplyContract = app.match(/function applyCatalogIntent\(option, value, force = false, source = 'user', assignments = null\) \{([\s\S]*?)\n\}/)?.[1] || '';
 const explicitIntentContract = app.match(/function recordCatalogExplicitIntent\(option, value\) \{([\s\S]*?)\n\}/)?.[1] || '';
 expect(explicitIntentContract.includes('resolveCatalogUserOverride(catalogInheritedValue(option.symbol), value)') &&
   explicitIntentContract.includes('catalogUserOverrides.delete(option.symbol)') &&
   explicitIntentContract.includes("return 'restore'") &&
   intentApplyContract.includes('recordCatalogExplicitIntent(changedOption || option, change.to)') &&
-  intentApplyContract.includes('!result.changes.some((change) => change.symbol === option.symbol)'),
+  intentApplyContract.includes('!result.changes.some((change) => change.symbol === directSymbol)'),
   'returning to an inherited Catalog value leaves a zombie explicit override');
 const groupBadgeContract = app.match(/function updateGroupBadges\(\) \{([\s\S]*?)\n\}/)?.[1] || '';
 const statsContract = app.match(/function updateStats\(\) \{([\s\S]*?)\n\}/)?.[1] || '';

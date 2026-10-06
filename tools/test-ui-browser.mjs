@@ -751,6 +751,9 @@ async function main() {
         bodyLineHeight: bodyStyle ? parseFloat(bodyStyle.lineHeight) || 0 : 0,
         scrollWidth: tooltip.scrollWidth,
         clientWidth: tooltip.clientWidth,
+        scrollHeight: tooltip.scrollHeight,
+        clientHeight: tooltip.clientHeight,
+        pinned: tooltip.classList.contains('is-pinned'),
         visualWidth: window.visualViewport?.width || window.innerWidth,
       };
     }`, [selector]);
@@ -916,12 +919,38 @@ async function main() {
     }, 3_000, 40).catch(async error => {
       throw new Error(`${error.message}: ${JSON.stringify(await headerTooltipState(selector))}`);
     });
-    expect(Boolean(state) && state.tooltipRect.right - state.tooltipRect.left <= state.visualWidth * 2 / 3 + 2,
-      context, 'long tooltip exceeds two thirds of the visual viewport', state);
+    expect(Boolean(state) && state.tooltipRect.right - state.tooltipRect.left <= state.visualWidth / 2 + 2,
+      context, 'long tooltip exceeds half of the visual viewport', state);
     expect(Boolean(state) && state.scrollWidth <= state.clientWidth + 1,
       context, 'long tooltip requires horizontal scrolling', state);
     expect(Boolean(state) && !state.singleLine && state.bodyHeight > state.bodyLineHeight + 2,
       context, 'long tooltip did not switch to multiline layout', state);
+    const copied = await evaluateFunction(browser, `(selector) => {
+      const target = document.querySelector(selector);
+      target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const tooltip = document.getElementById('uiTooltip');
+      const body = document.getElementById('uiTooltipBody');
+      const range = document.createRange(); range.selectNodeContents(body);
+      const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      target.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse' }));
+      const nativeMenuAllowed = tooltip.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      return { pinned: tooltip.classList.contains('is-pinned'), hidden: tooltip.hidden,
+        text: selection.toString(), nativeMenuAllowed };
+    }`, [selector]);
+    expect(copied.pinned && !copied.hidden && copied.text === message && copied.nativeMenuAllowed,
+      context, 'right-click pin/copy did not preserve the normal copy menu', copied);
+    await resetFloatingState();
+    const shortMessage = '插件说明\n来源：自选';
+    await evaluateFunction(browser, `(selector, message) => {
+      const target = document.querySelector(selector); target.dataset.uiTooltipBody = message;
+      target.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+    }`, [selector, shortMessage]);
+    const short = await waitFor('short multiline tooltip uses natural height', async () => {
+      const value = await headerTooltipState(selector);
+      return value && !value.hidden && value.actual === shortMessage && tooltipSafe(value, context) ? value : null;
+    }, 3_000, 40);
+    expect(short.scrollHeight <= short.clientHeight + 1,
+      context, 'short tooltip unnecessarily requires vertical scrolling', short);
     await evaluateFunction(browser, `(selector, original) => {
       const target = document.querySelector(selector);
       if (original === null) delete target.dataset.uiTooltipBody;

@@ -25,6 +25,7 @@ jobs:
       - name: Verify requester and cancel / 核验提交者并取消
         uses: actions/github-script@v8
         with:
+          retries: 3
           script: |
             const command = context.payload.comment.body.trim().toLowerCase();
             if (command !== '/cancel') return;
@@ -54,50 +55,65 @@ jobs:
               });
               return;
             }
-            const list = async (status) => (await github.rest.actions.listWorkflowRuns({
+            // Stop pending dispatch before inspecting active Runs. API errors
+            // are retried by github-script; an ambiguous cancel response is
+            // reconciled against the Run instead of assumed to be failure.
+            await github.rest.issues.update({
+              owner, repo, issue_number: issue.number, state: 'closed', state_reason: 'not_planned',
+            });
+            const list = (status) => github.paginate(github.rest.actions.listWorkflowRuns, {
               owner, repo, workflow_id: 'custom-build.yml', status, per_page: 100,
-            })).data.workflow_runs;
+              request: { timeout: 10000 },
+            });
             const dispatchPrefixes = [
               `${requester}#${issue.number} `,
               `Build ${requester}#${issue.number} · `,
             ].map((prefix) => prefix.toLowerCase());
             const issueMarker = `#${issue.number}/`.toLowerCase();
-            const active = [...await list('queued'), ...await list('in_progress')]
+            const matching = [...await list('queued'), ...await list('in_progress')]
               .filter((run) => {
                 const title = String(run.display_title || '').toLowerCase();
                 return run.event === 'workflow_dispatch' &&
                   (title.includes(issueMarker) || dispatchPrefixes.some((prefix) => title.startsWith(prefix)));
               });
+            // A Run can move from queued to in_progress between list calls.
+            const active = [...new Map(matching.map(run => [run.id, run])).values()];
             if (!active.length) {
               await github.rest.issues.createComment({
                 owner, repo, issue_number: issue.number,
                 body: `@${commenter}\n\nNo active build Run was found; closing this Issue also prevents a pending dispatch. / 未找到运行中的构建；关闭本 Issue 也会阻止尚未开始的派发。`,
               });
-              await github.rest.issues.update({
-                owner, repo, issue_number: issue.number, state: 'closed', state_reason: 'not_planned',
-              });
               return;
             }
-            const cancelled = [];
-            for (const run of active) {
-              try {
-                await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id });
-              } catch (error) {
-                if (![409, 422].includes(Number(error.status))) throw error;
+            const recoverable = (error) => [409, 422, 429, 500, 502, 503, 504].includes(Number(error.status)) ||
+              ['ECONNRESET', 'ETIMEDOUT'].includes(error.code);
+            const stopped = await Promise.all(active.map(async (run) => {
+              const started = Date.now();
+              const deadline = started + 180000;
+              const parameters = { owner, repo, run_id: run.id, request: { timeout: 10000 } };
+              let forceRequested = false;
+              let lastError = null;
+              try { await github.rest.actions.cancelWorkflowRun(parameters); }
+              catch (error) { if (!recoverable(error)) throw error; lastError = error; }
+              while (Date.now() < deadline) {
+                try {
+                  const { data: latest } = await github.rest.actions.getWorkflowRun(parameters);
+                  if (latest.status === 'completed') return { url: run.html_url, conclusion: latest.conclusion };
+                  if (!forceRequested && Date.now() - started >= 15000) {
+                    await github.request('POST /repos/{owner}/{repo}/actions/runs/{run_id}/force-cancel', parameters);
+                    forceRequested = true;
+                  }
+                } catch (error) {
+                  if (!recoverable(error)) throw error;
+                  lastError = error;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 5000));
               }
-              await new Promise((resolve) => setTimeout(resolve, 15000));
-              const { data: latest } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id });
-              if (latest.status !== 'completed') {
-                await github.request('POST /repos/{owner}/{repo}/actions/runs/{run_id}/force-cancel', {
-                  owner, repo, run_id: run.id,
-                });
-              }
-              cancelled.push(run.html_url);
-            }
+              throw new Error(`Cancellation not confirmed for ${run.html_url}${lastError ? ': ' + lastError.message : ''}`);
+            }));
+            const cancelled = stopped.filter((run) => run.conclusion === 'cancelled').map((run) => run.url);
+            const completed = stopped.filter((run) => run.conclusion !== 'cancelled').map((run) => run.url);
             await github.rest.issues.createComment({
               owner, repo, issue_number: issue.number,
-              body: `@${commenter}\n\nBuild cancellation requested / 已请求取消构建\n\n${cancelled.join('\n')}\n\nNormal cancellation is used first; force cancellation is only used when the Run remains active. / 系统优先普通取消，只有 Run 仍未停止时才使用强制取消。`,
-            });
-            await github.rest.issues.update({
-              owner, repo, issue_number: issue.number, state: 'closed', state_reason: 'not_planned',
+              body: `@${commenter}\n\nBuild stopped / 构建已停止\n\nCancelled / 已取消:\n${cancelled.join('\n') || '—'}\n\nAlready completed / 已结束:\n${completed.join('\n') || '—'}\n\nNormal cancellation is used first; force cancellation is only used when the Run remains active. / 系统优先普通取消，只有 Run 仍未停止时才使用强制取消。`,
             });

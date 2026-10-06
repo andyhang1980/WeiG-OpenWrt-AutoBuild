@@ -416,7 +416,7 @@ function positionUiTooltip(target, event = null) {
   const boundary = uiTooltipBoundary(target);
   const gap = 9;
   const margin = 8;
-  const contentMaxWidth = Math.max(1, Math.floor(viewport.width * 2 / 3));
+  const contentMaxWidth = Math.max(1, Math.floor(viewport.width / 2));
   const anchor = uiTooltipAvoidanceTarget(target).getBoundingClientRect();
 
   const actionbar = $('actionbar');
@@ -440,19 +440,21 @@ function positionUiTooltip(target, event = null) {
     align: 'start',
   });
   const measureLayer = () => {
-    const rect = uiTooltip.getBoundingClientRect();
     return {
       // Retain intrinsic width until the single-line fit decision. Clamping
       // here would disguise overflowing text as a successfully fitted box.
-      width: Math.max(rect.width || 0, uiTooltip.scrollWidth || 0, 1),
-      height: Math.min(360, Math.max(rect.height || 0, uiTooltip.scrollHeight || 0, 1)),
+      // offset dimensions are not scaled by the entrance animation. Include
+      // borders in scroll height, otherwise every short message gains a bar.
+      width: Math.max(uiTooltip.offsetWidth, uiTooltip.scrollWidth, 1),
+      height: Math.max(uiTooltip.offsetHeight,
+        uiTooltip.scrollHeight + uiTooltip.offsetHeight - uiTooltip.clientHeight, 1),
     };
   };
   const compactCandidate = uiTooltip.dataset.tooltipSingleLine === 'true';
   // A tooltip may be retargeted while already visible. Clear the previous
   // geometry before measuring so a new message receives its natural width.
   uiTooltip.style.removeProperty('width');
-  uiTooltip.style.removeProperty('max-width');
+  uiTooltip.style.maxWidth = `${contentMaxWidth}px`;
   uiTooltip.style.removeProperty('max-height');
   uiTooltip.classList.toggle('is-single-line', compactCandidate);
   const apply = (geometry) => {
@@ -481,12 +483,9 @@ function positionUiTooltip(target, event = null) {
   // Width/max-height can change an auto-sized tooltip after the first pass.
   // Re-read the rendered box once and recompute if it grew into an avoided
   // region; this keeps the contract valid without a viewport-specific guess.
-  const rendered = uiTooltip.getBoundingClientRect();
-  if (rendered.width > geometry.width + 1 || rendered.height > geometry.height + 1 || overlapsAvoid(rendered)) {
-    const retry = calculate({
-      width: Math.max(rendered.width, uiTooltip.scrollWidth || 0, 1),
-      height: Math.min(360, Math.max(rendered.height, uiTooltip.scrollHeight || 0, 1)),
-    });
+  const rendered = measureLayer();
+  if (rendered.width > geometry.width + 1 || rendered.height > geometry.height + 1 || overlapsAvoid(uiTooltip.getBoundingClientRect())) {
+    const retry = calculate(rendered);
     geometry = retry;
     apply(geometry);
   }
@@ -559,7 +558,7 @@ document.addEventListener('click', (event) => {
     return;
   }
   const target = event.target.closest?.(UI_TOOLTIP_SELECTOR);
-  if (target) {
+  if (target && !target.closest('.plugin')) {
     const identity = uiTooltipIdentity(target);
     const now = performance.now();
     const repeated = uiTooltipClickTarget === identity && now - uiTooltipClickAt <= 500;
@@ -579,15 +578,23 @@ document.addEventListener('click', (event) => {
 });
 document.addEventListener('dblclick', (event) => {
   const target = event.target.closest?.(UI_TOOLTIP_SELECTOR);
-  if (!target) return;
+  if (!target || target.closest('.plugin')) return;
   event.preventDefault();
   event.stopPropagation();
   showDatasetTooltip(target, event, true);
 }, true);
+document.addEventListener('contextmenu', (event) => {
+  // Keep the browser's normal copy menu inside an already pinned tooltip.
+  if (uiTooltip?.contains(event.target)) return;
+  const target = event.target.closest?.(UI_TOOLTIP_SELECTOR);
+  if (!target) return;
+  event.preventDefault();
+  showDatasetTooltip(target, event, true);
+});
 document.addEventListener('pointerup', (event) => {
   if (event.pointerType !== 'touch') return;
   const target = event.target.closest?.(UI_TOOLTIP_SELECTOR);
-  if (!target) return;
+  if (!target || target.closest('.plugin')) return;
   const now = performance.now();
   const identity = uiTooltipIdentity(target);
   const repeated = uiTooltipTouchTarget === identity && now - uiTooltipTouchAt <= 500;

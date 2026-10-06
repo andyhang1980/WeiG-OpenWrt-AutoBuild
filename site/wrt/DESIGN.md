@@ -146,6 +146,10 @@ The layout must remain usable at 320×568, 360×640, 390×844, 430×932,
 browser zoom.
 
 - Prefer `dvh` with a `vh` fallback for viewport-bound surfaces.
+- Tooltips use their natural content width up to half the visual viewport,
+  wrap text, and scroll vertically only when the available height is exceeded.
+  Right-click pins a copyable tooltip; its normal browser copy menu remains available.
+  Plugin cards toggle on a whole-card click, without a competing double-click pin.
 - Respect `env(safe-area-inset-*)` on every fixed or sticky edge.
 - A modal, tooltip, Build Information card, font panel, catalog menu, and
   floating dock must have a bounded height and an internal scroll path when

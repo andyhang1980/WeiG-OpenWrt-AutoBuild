@@ -2,6 +2,7 @@
  "version": 2,
  "language": "zh-CN",
  "strings": {
+  "group.Other": "其它",
   "busy.import": "正在加载配置…",
   "busy.processing": "正在处理配置…",
   "busy.progress": "正在恢复选项 {current}/{total}…",

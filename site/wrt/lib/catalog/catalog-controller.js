@@ -212,6 +212,7 @@ function catalogApplicationsPluginData(document, catalog = MENU_CATALOG) {
     JSON.stringify(catalog.applications?.fields) === JSON.stringify(['symbol', 'package', 'group', 'hot'])
     ? catalog.applications.rows || [] : null;
   if (branchRows) {
+    const curatedGroups = new Set(document?.groups || []);
     const plugins = branchRows.map(([symbol, packageName, group, hot]) => {
       const item = metadata.get(packageName) || {};
       const observed = sizes.get(packageName);
@@ -220,7 +221,9 @@ function catalogApplicationsPluginData(document, catalog = MENU_CATALOG) {
         pkg: packageName,
         catalogOnly: true,
         catalogCandidates: [packageName],
-        group: String(group || 'Applications'),
+        // Native menu paths are not curated presentation categories. Keep
+        // known authored groups; older unmapped paths share the Other group.
+        group: curatedGroups.has(group) ? group : 'Other',
         hot: hot === 1 || item.hot === true,
         archiveBytes: observed?.archiveBytes ?? null,
         installedBytes: observed?.installedBytes ?? null,

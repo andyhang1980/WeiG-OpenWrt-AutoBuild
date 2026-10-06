@@ -1,6 +1,7 @@
 {
  "_note": "English is the canonical UI language. Keep {x} placeholders unchanged. Generated bundles are written to site/wrt/data/i18n/ by tools/gen-i18n.mjs.",
  "strings": {
+  "group.Other": "Other",
   "busy.import": "Loading configuration…",
   "busy.processing": "Processing configuration…",
   "busy.progress": "Restoring selections {current}/{total}…",

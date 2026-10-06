@@ -2,6 +2,7 @@
  "version": 2,
  "language": "zh-TW",
  "strings": {
+  "group.Other": "其他",
   "busy.import": "Loading configuration…",
   "busy.processing": "Processing configuration…",
   "busy.progress": "Restoring selections {current}/{total}…",

@@ -2732,6 +2732,14 @@ function cascadeEnabled(model, values, changes, initialSymbols, options = {}) {
     const before = changes.length;
     const requested = normalizeValue(values.get(symbol));
     applyDirectKconfigDependencies(model, record, requested, values, changes, options);
+    // Restore user definitions when a newly enabled parent makes them legal,
+    // before its conditional selects choose a provider. Waiting until the
+    // final pass can introduce a wrong transient installation dependency.
+    for (const dependent of reverseCandidates(model, record)) {
+      if (!options.intentAssignments?.has(dependent) && options.preferredValues?.has(dependent)) {
+        restorePreferredValue(model, dependent, options.preferredValues.get(dependent), values, changes, options);
+      }
+    }
     applyKconfigRules(model, record, requested, values, changes, options);
     applyImplyRules(model, record, requested, values, changes, options);
     applyDirectPackageDependencies(model, record, requested, values, changes, options);
@@ -2988,6 +2996,17 @@ function prerequisiteStateCandidates(model, symbol, inputValues, options = {}) {
 function prerequisitePlanReplay(model, inputValues, steps, target, intent, options) {
   let values = new Map(inputValues);
   const changes = [];
+  if (intent.conflictViolations?.length) {
+    try {
+      const result = applyUserIntent(model, inputValues, { ...intent,
+        symbol: target.configSymbol, skipPrerequisitePlanning: true,
+        assignments: new Map([...steps.map((step) => [step.symbol, step.value]),
+          [target.configSymbol, intent.value]]) });
+      const explicit = new Set(steps.map((step) => step.symbol));
+      return { steps, ...result, automaticChanges: result.changes.filter((change) =>
+        !explicit.has(change.symbol) && change.symbol !== target.configSymbol) };
+    } catch { return null; }
+  }
   for (const step of steps) {
     let result;
     try {
@@ -3047,27 +3066,59 @@ export function deriveKconfigPrerequisitePlans(model, inputValues, record, reque
   options.explicitSymbols = normalizedIntent.explicitSymbols;
   const requestedLevel = stateLevel(value);
   const initialDependency = dependencyState(target, initialValues, requestedLevel, options);
-  if (initialDependency.status === 'satisfied') return { candidates: [], recommended: null };
-  const symbols = prerequisiteSymbols(model, target);
+  const conflictSearch = Boolean(intent.conflictViolations?.length);
+  if (initialDependency.status === 'satisfied' && !conflictSearch) return { candidates: [], recommended: null };
+  if (conflictSearch && intent.conflictViolations.some((row) => row.reason === 'provider-absent')) {
+    return { candidates: [], recommended: null };
+  }
+  const symbols = conflictSearch ? [] : prerequisiteSymbols(model, target);
+  // A conditional provider is a Kconfig prerequisite too. Discover gates
+  // from the exact selectors of conflicting participants, never package names.
+  if (conflictSearch) {
+    for (const violation of intent.conflictViolations) {
+      for (const name of [violation.package, violation.otherPackage, ...(violation.otherPackages || [])]) {
+        const participant = model.byPackage.get(name);
+        for (const selector of model.reverseSelects.get(participant?.configSymbol) || []) {
+          const source = model.bySymbol.get(selector);
+          for (const relation of kconfigRelationRows(source, 'select')) {
+            if (relationTarget(relation) !== participant.configSymbol) continue;
+            const condition = kconfigRelationParts(relation);
+            for (const symbol of unique([...referencedExpressionSymbols(condition.condition),
+              ...expressionAstSymbols(condition.conditionAst)])) {
+              const candidate = model.bySymbol.get(symbol);
+              if (candidate?.userSettable !== false && ['bool', 'tristate'].includes(candidate?.type) &&
+                  !options.trustedSymbols.has(symbol) && !options.explicitSymbols.has(symbol) &&
+                  symbol !== target.configSymbol && !symbols.includes(symbol)) symbols.push(symbol);
+            }
+          }
+        }
+      }
+    }
+  }
   if (!symbols.length) return { candidates: [], recommended: null };
 
   const queue = [{ values: initialValues, steps: [], used: new Set() }];
   const visited = new Set();
   const candidates = [];
   const maxSteps = Math.min(6, Math.max(1, symbols.length));
+  const maxNodes = conflictSearch ? 32 : 4096;
+  const deadline = conflictSearch ? Date.now() + 250 : Infinity;
+  let minimumCost = Infinity;
   let visitedNodes = 0;
-  while (queue.length && visitedNodes < 4096) {
+  while (queue.length && visitedNodes < maxNodes && Date.now() <= deadline) {
     const node = queue.shift();
+    if (node.steps.length > minimumCost) break;
     visitedNodes += 1;
     const key = symbols.map((symbol) => normalizeValue(node.values.get(symbol) ?? 'n')).join('|');
     if (visited.has(key)) continue;
     visited.add(key);
     const dependency = dependencyState(target, node.values, requestedLevel, options);
-    if (dependency.status === 'satisfied' && node.steps.length) {
+    if ((conflictSearch || dependency.status === 'satisfied') && node.steps.length) {
       const replay = prerequisitePlanReplay(model, initialValues, node.steps, target, {
         ...normalizedIntent, value,
       }, options);
       if (replay) {
+        minimumCost = Math.min(minimumCost, node.steps.length);
         candidates.push({
           ...replay,
           symbol: target.configSymbol,
@@ -3077,12 +3128,15 @@ export function deriveKconfigPrerequisitePlans(model, inputValues, record, reque
           key: node.steps.map((step) => `${step.symbol}=${step.value}`).join('\\0'),
         });
       }
-      continue;
+      if (replay || !conflictSearch) continue;
     }
-    if (node.steps.length >= maxSteps || dependency.status === 'deferred') continue;
+    if (node.steps.length >= Math.min(maxSteps, minimumCost) || dependency.status === 'deferred') continue;
     for (const symbol of symbols) {
       if (node.used.has(symbol)) continue;
-      for (const nextValue of prerequisiteStateCandidates(model, symbol, node.values, options)) {
+      const candidates = conflictSearch && !options.explicitSymbols.has(symbol)
+        ? (model.bySymbol.get(symbol)?.states || []).filter((state) => state !== (node.values.get(symbol) ?? 'n'))
+        : prerequisiteStateCandidates(model, symbol, node.values, options);
+      for (const nextValue of candidates) {
         const values = new Map(node.values);
         values.set(symbol, nextValue);
         queue.push({
@@ -3096,6 +3150,12 @@ export function deriveKconfigPrerequisitePlans(model, inputValues, record, reque
         });
       }
     }
+  }
+  // Partial exploration cannot prove uniqueness. Keep it unresolved rather
+  // than freezing the browser or guessing from a truncated candidate set.
+  if (conflictSearch && queue.some((node) => node.steps.length <= minimumCost) &&
+      (visitedNodes >= maxNodes || Date.now() > deadline)) {
+    return { candidates: [], recommended: null, reason: 'search-budget' };
   }
   // The BFS can reach the same set of operations in more than one order. The
   // order is not a second user choice, so collapse those permutations before
@@ -3153,6 +3213,31 @@ function applyScalarIntent(model, inputValues, record, intent) {
   return { values, changes, ...derived, violations, diagnostics: [] };
 }
 
+function restorePreferredValue(model, symbol, rawPreferred, values, changes, options) {
+  const record = model.bySymbol.get(symbol);
+  if (!record) return false;
+  if (['string', 'int', 'hex'].includes(record.type)) {
+    return rawPreferred != null && dependencyLevel(record, values, options) > 0 &&
+      scalarValueValid(record.type, String(rawPreferred)) &&
+      setValue(values, changes, symbol, String(rawPreferred), 'preferred-intent', '', true);
+  }
+  if (!['bool', 'tristate'].includes(record.type)) return false;
+  const preferred = normalizeKconfigStateValue(record, rawPreferred);
+  const constraints = kconfigStateConstraints(model, record, values, options);
+  let level = Math.min(stateLevel(preferred), constraints.maximumLevel);
+  if (!options.explicitSymbols.has(symbol)) {
+    const implied = activeImplyRequirements(model, record, values, options)
+      .reduce((maximum, item) => Math.max(maximum, item.level), 0);
+    level = Math.max(level, Math.min(implied, constraints.maximumLevel));
+  }
+  level = Math.max(level, constraints.minimumLevel);
+  if (record.choice && (model.choices.get(record.choice) || []).some(sibling =>
+    sibling !== symbol && normalizeValue(values.get(sibling) ?? 'n') === 'y')) level = 0;
+  if (record.type === 'bool' && level === 1) level = 2;
+  const effective = normalizeKconfigStateValue(record, stateForKconfigLevel(model, record, level, values, options));
+  return setValue(values, changes, symbol, effective, 'preferred-intent');
+}
+
 export function applyUserIntent(model, inputValues, intent) {
   const initialValues = new Map(valuesMap(inputValues));
   const values = new Map(initialValues);
@@ -3161,7 +3246,24 @@ export function applyUserIntent(model, inputValues, intent) {
   const value = normalizeValue(intent?.value ?? 'n');
   const record = model.bySymbol.get(symbol);
   if (!record) throw new Error(`Catalog does not define ${symbol}`);
-  if (['string', 'int', 'hex'].includes(record.type)) return applyScalarIntent(model, inputValues, record, intent);
+  if (['string', 'int', 'hex'].includes(record.type)) {
+    if (intent?.assignments) throw new Error('Kconfig state plans accept only bool/tristate assignments');
+    return applyScalarIntent(model, inputValues, record, intent);
+  }
+  // A conflict switch is one user transaction, not a sequence of invalid
+  // intermediate configurations. Only changed assignments are explicit;
+  // unchanged participant rows must not lock an automatic provider to N.
+  const assignments = new Map(intent?.assignments || []);
+  assignments.set(symbol, value);
+  for (const [assignedSymbol, assignedValue] of assignments) {
+    const assigned = model.bySymbol.get(assignedSymbol);
+    if (!assigned || !['bool', 'tristate'].includes(assigned.type) ||
+        !['n', 'm', 'y'].includes(assignedValue) ||
+        (assigned.type === 'bool' && assignedValue === 'm')) {
+      throw new Error(`Invalid Kconfig state assignment: ${assignedSymbol}=${assignedValue}`);
+    }
+    setValue(values, changes, assignedSymbol, assignedValue, 'user');
+  }
   const options = validationOptions(initialValues, {
     ...(intent?.validationOptions || {}), model, typedRelationsComplete: model?.typedRelationsComplete === true,
   });
@@ -3175,8 +3277,14 @@ export function applyUserIntent(model, inputValues, intent) {
   // (for example the dependency gate) remain free to lower the stale target.
   options.intentSymbol = symbol;
   options.explicitSymbols = normalizedIntent.explicitSymbols;
+  if (intent?.assignments) {
+    for (const assignedSymbol of assignments.keys()) options.explicitSymbols.add(assignedSymbol);
+  }
   options.derivedSymbols = new Set(intent?.derivedSymbols || []);
-  const constraints = kconfigStateConstraints(model, record, initialValues, options);
+  options.preferredValues = intent?.preferredValues instanceof Map ? intent.preferredValues :
+    new Map(Object.entries(intent?.preferredValues || {}));
+  options.intentAssignments = assignments;
+  const constraints = kconfigStateConstraints(model, record, intent?.assignments ? values : initialValues, options);
   const legal = constraints.legalStates.includes(value);
   const alreadyRequested = value !== 'n' && legal && constraints.current === value &&
     constraints.dependencyStatus === 'satisfied' && !constraints.readOnly;
@@ -3203,66 +3311,52 @@ export function applyUserIntent(model, inputValues, intent) {
   // from a non-Y member to Y can reach this boundary.  Do not run this check
   // from import, validateConfig, or Worker reconstruction: those paths model
   // non-interactive conf/defconfig semantics and must remain readable.
-  if (record.choice && value === 'y' &&
-      normalizeValue(initialValues.get(symbol) ?? 'n') !== 'y') {
-    const choice = model.choiceDetails?.get(record.choice);
+  for (const [assignedSymbol, assignedValue] of assignments) {
+    const assigned = model.bySymbol.get(assignedSymbol);
+    if (!assigned.choice || assignedValue !== 'y' ||
+        normalizeValue(initialValues.get(assignedSymbol) ?? 'n') === 'y') continue;
+    const choice = model.choiceDetails?.get(assigned.choice);
     if (choice) {
       const resetState = choiceResetConditionState(model, choice, initialValues, options);
       if (resetState.status !== 'unsatisfied') {
-        throwChoiceResetIntentError(choice, symbol, value,
-          normalizeValue(initialValues.get(symbol) ?? 'n'), resetState, constraints);
+        throwChoiceResetIntentError(choice, assignedSymbol, assignedValue,
+          normalizeValue(initialValues.get(assignedSymbol) ?? 'n'), resetState,
+          kconfigStateConstraints(model, assigned, initialValues, options));
       }
     }
   }
   const beforeKeys = new Set(validateConfig(model, initialValues, options).map(violationKey));
-  setValue(values, changes, symbol, value, 'user');
-  if (record.choice && value === 'y') {
-    for (const sibling of model.choices.get(record.choice) || []) if (sibling !== symbol) setValue(values, changes, sibling, 'n', 'choice', symbol);
-  } else if (record.choice && value === 'm') {
-    for (const sibling of model.choices.get(record.choice) || []) {
-      const siblingRecord = model.bySymbol.get(sibling);
-      if (sibling !== symbol && normalizeValue(values.get(sibling) ?? 'n') === 'y' && siblingRecord?.states?.includes('m')) {
-        setValue(values, changes, sibling, 'm', 'choice', symbol);
+  for (const [assignedSymbol, assignedValue] of assignments) {
+    const assigned = model.bySymbol.get(assignedSymbol);
+    if (assigned.choice && assignedValue === 'y') {
+      for (const sibling of model.choices.get(assigned.choice) || []) {
+        if (sibling !== assignedSymbol) setValue(values, changes, sibling, 'n', 'choice', assignedSymbol);
+      }
+    } else if (assigned.choice && assignedValue === 'm') {
+      for (const sibling of model.choices.get(assigned.choice) || []) {
+        const siblingRecord = model.bySymbol.get(sibling);
+        if (sibling !== assignedSymbol && normalizeValue(values.get(sibling) ?? 'n') === 'y' && siblingRecord?.states?.includes('m')) {
+          setValue(values, changes, sibling, 'm', 'choice', assignedSymbol);
+        }
       }
     }
   }
-  if (value === 'n') cascadeDisabled(model, values, changes, [symbol], options); else cascadeEnabled(model, values, changes, [symbol], options);
+  // Enable replacement providers before withdrawing their alternatives, so
+  // conditional selectors do not unnecessarily disable surviving consumers.
+  cascadeEnabled(model, values, changes, [...assignments].filter(([, state]) => state !== 'n').map(([key]) => key), options);
+  cascadeDisabled(model, values, changes, [...assignments].filter(([, state]) => state === 'n').map(([key]) => key), options);
   propagateKconfigChanges(model, values, changes, 0, options);
   if (changes.some((change) => change.to === 'n')) pruneUnusedDependencies(model, values, changes,
     intent?.dependencySymbols, intent?.protectedSymbols, options);
   enforceActiveReverseRelations(model, values, changes, options);
-  const preferredValues = intent?.preferredValues instanceof Map ? intent.preferredValues :
-    new Map(Object.entries(intent?.preferredValues || {}));
+  const preferredValues = options.preferredValues;
   let restored = true;
   for (let pass = 0; restored && pass < preferredValues.size + 1; pass++) {
     restored = false;
     const preferredStart = changes.length;
     for (const [preferredSymbol, rawPreferred] of preferredValues) {
-      if (preferredSymbol === symbol || !model.bySymbol.has(preferredSymbol)) continue;
-      const preferredRecord = model.bySymbol.get(preferredSymbol);
-      if (['string', 'int', 'hex'].includes(preferredRecord.type)) {
-        if (rawPreferred != null && dependencyLevel(preferredRecord, values, options) > 0 &&
-            scalarValueValid(preferredRecord.type, String(rawPreferred)) &&
-            setValue(values, changes, preferredSymbol, String(rawPreferred), 'preferred-intent', '', true)) restored = true;
-        continue;
-      }
-      if (!['bool', 'tristate'].includes(preferredRecord.type)) continue;
-      const preferred = normalizeKconfigStateValue(preferredRecord, rawPreferred);
-      const preferredConstraints = kconfigStateConstraints(model, preferredRecord, values, options);
-      let effectiveLevel = Math.min(stateLevel(preferred), preferredConstraints.maximumLevel);
-      if (!options.explicitSymbols.has(preferredSymbol)) {
-        const impliedLevel = activeImplyRequirements(model, preferredRecord, values, options)
-          .reduce((maximum, item) => Math.max(maximum, item.level), 0);
-        effectiveLevel = Math.max(effectiveLevel, Math.min(impliedLevel, preferredConstraints.maximumLevel));
-      }
-      effectiveLevel = Math.max(effectiveLevel, preferredConstraints.minimumLevel);
-      if (preferredRecord.choice && (model.choices.get(preferredRecord.choice) || []).some((sibling) =>
-        sibling !== preferredSymbol && normalizeValue(values.get(sibling) ?? 'n') === 'y')) effectiveLevel = 0;
-      if (preferredRecord.type === 'bool' && effectiveLevel === 1) effectiveLevel = 2;
-      const effective = normalizeKconfigStateValue(preferredRecord,
-        stateForKconfigLevel(model, preferredRecord, effectiveLevel, values, options));
-      if (normalizeValue(values.get(preferredSymbol) ?? 'n') === effective) continue;
-      if (setValue(values, changes, preferredSymbol, effective, 'preferred-intent')) restored = true;
+      if (assignments.has(preferredSymbol) || !model.bySymbol.has(preferredSymbol)) continue;
+      if (restorePreferredValue(model, preferredSymbol, rawPreferred, values, changes, options)) restored = true;
     }
     propagateKconfigChanges(model, values, changes, preferredStart, options);
   }
@@ -3272,9 +3366,46 @@ export function applyUserIntent(model, inputValues, intent) {
     pruneUnusedDependencies(model, values, changes, intent?.dependencySymbols, intent?.protectedSymbols, options);
     derived = reconcileDerivedDefaults(model, values, changes, options);
   }
+  // A conditional select can provisionally select one provider, then switch
+  // to another when derived defaults/preferred user values settle. Reuse the
+  // ordinary orphan proof for previously dependency-owned values too: a
+  // retained conditional provider can become unused on re-enabling its owner.
+  // Protected baseline and explicit values are never pruned.
+  const transientDependencies = new Set([...(intent?.dependencySymbols || []), ...changes.filter((change) =>
+    ['select', 'kconfig-dependency', 'package-dependency'].includes(change.reason) &&
+    stateLevel(initialValues.get(change.symbol) ?? 'n') === 0)
+    .map((change) => change.symbol)].filter(symbol =>
+    !assignments.has(symbol) && !options.explicitSymbols.has(symbol)));
+  if (transientDependencies.size) {
+    pruneUnusedDependencies(model, values, changes, transientDependencies, intent?.protectedSymbols, options);
+    derived = reconcileDerivedDefaults(model, values, changes, options);
+  }
   const violations = validateConfig(model, values, options);
   const diagnostics = selectSuppressionDiagnostics(model, values, options);
-  if (value !== 'n') {
+  if (intent?.assignments && !violations.some((item) => isBlockingViolation(item) &&
+      (item.symbol === symbol || !beforeKeys.has(violationKey(item))))) {
+    for (const [assignedSymbol, assignedValue] of assignments) {
+      const final = kconfigStateConstraints(model, model.bySymbol.get(assignedSymbol), values, options);
+      // A prerequisite may become selected at the same value as the user
+      // request after convergence. A fixed-Y control is not editable, but its
+      // already-satisfied Y assignment is still a legal transaction result.
+      const satisfied = final.current === assignedValue && final.legalStates.includes(assignedValue) &&
+        final.dependencyStatus === 'satisfied' && !final.readOnly;
+      if (values.get(assignedSymbol) !== assignedValue ||
+          (!final.selectableStates.includes(assignedValue) && !satisfied)) {
+        const attempted = new Map(values);
+        for (const [key, next] of assignments) attempted.set(key, next);
+        cascadeEnabled(model, attempted, [], [...assignments.keys()], options);
+        const reasons = validateConfig(model, attempted, options).filter(isBlockingViolation);
+        const error = new Error(reasons.length ? formatViolations(reasons) :
+          `${assignedSymbol} cannot be set to ${assignedValue.toUpperCase()} under the final Kconfig constraints`);
+        error.name = 'CatalogIntentError'; error.constraints = final;
+        error.violations = reasons;
+        throw error;
+      }
+    }
+  }
+  if (value !== 'n' || intent?.assignments) {
     // A positive user intent must still be rejected when the requested symbol
     // was already present in an invalid imported state.  Comparing only with
     // beforeKeys would otherwise turn a direct re-selection of an unsatisfied
@@ -3290,6 +3421,12 @@ export function applyUserIntent(model, inputValues, intent) {
         !beforeKeys.has(violationKey(item)));
       if (!intent?.skipPrerequisitePlanning && blocking.some((item) => item.code === 'kconfig-dependency-unsatisfied')) {
         const prerequisitePlans = deriveKconfigPrerequisitePlans(model, initialValues, record, value, normalizedIntent);
+        if (prerequisitePlans?.recommended) error.prerequisitePlans = prerequisitePlans;
+      }
+      if (!intent?.skipPrerequisitePlanning && !error.prerequisitePlans &&
+          blocking.some((item) => item.code === 'package-conflict')) {
+        const prerequisitePlans = deriveKconfigPrerequisitePlans(model, initialValues, record, value,
+          { ...normalizedIntent, conflictViolations: blocking });
         if (prerequisitePlans?.recommended) error.prerequisitePlans = prerequisitePlans;
       }
       throw error;

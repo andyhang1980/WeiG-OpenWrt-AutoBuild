@@ -1,5 +1,6 @@
 {
   "zh-CN": {
+    "group.Other": "其它",
     "bar.addedApplications": "新增 {n} 个软件 · 空间风险",
     "bar.applicationCountRisk": "软件数量仅为风险提示，不代表容量计算；不计内置应用、自动依赖和 M 软件包。新增软件较多可能超出 RootFS，导致构建失败；目标支持时可增大 RootFS 分区，否则请减少软件。此提示不阻止提交。",
     "size.summary.unavailable": "上游未提供匹配的安装体积数据",
@@ -593,6 +594,7 @@
   "import.leaveWorkspaceConfirm": "切换 Target 会退出上传配置工作区，并改为网页新建配置。继续吗？"
  },
  "zh-TW": {
+  "group.Other": "其他",
   "compatibility.planUnavailable": "無法自動推薦：{reason}",
   "compatibility.retainedDependencies": "仍被其他選擇需要或受保護，保留：{list}",
   "app.title": "OpenWrt 韌體線上客製",
@@ -1109,6 +1111,7 @@
   "import.leaveWorkspaceConfirm": "切換 Target 會退出上傳設定工作區，並改為網頁新建設定。繼續嗎？"
  },
  "ru": {
+  "group.Other": "Другие",
   "app.title": "Онлайн-конструктор прошивок OpenWrt",
   "app.subtitle": "Выберите пакеты, запустите облачную сборку, выпейте капучино и встречайте эпоху открытого кода",
   "app.desc": "Онлайн-конструктор прошивок OpenWrt: выберите исходники и пакеты, сборка в облаке GitHub Actions, скачивание бесплатно",
@@ -1623,6 +1626,7 @@
   "import.leaveWorkspaceConfirm": "Changing the Target exits the uploaded-configuration workspace and starts a new web configuration. Continue?"
  },
  "es": {
+  "group.Other": "Otros",
   "app.title": "Personaliza tu firmware OpenWrt en línea",
   "app.subtitle": "Elige los paquetes, compila en la nube, toma un capuchino y da la bienvenida a la era del código abierto",
   "app.desc": "Personalización de firmware OpenWrt en línea: elige el código fuente, marca los plugins, compila con GitHub Actions y descarga gratis",
@@ -2137,6 +2141,7 @@
   "import.leaveWorkspaceConfirm": "Changing the Target exits the uploaded-configuration workspace and starts a new web configuration. Continue?"
  },
  "pt": {
+  "group.Other": "Outros",
   "app.title": "Firmware OpenWrt personalizado online",
   "app.subtitle": "Escolha os pacotes, compile na nuvem, tome um cappuccino e celebre a era do código aberto",
   "app.desc": "Firmware OpenWrt personalizado online: escolha o código-fonte, marque os plugins, compile na nuvem com o GitHub Actions e baixe de graça",
@@ -2651,6 +2656,7 @@
   "import.leaveWorkspaceConfirm": "Changing the Target exits the uploaded-configuration workspace and starts a new web configuration. Continue?"
  },
  "ja": {
+  "group.Other": "その他",
   "app.title": "OpenWrt ファームウェアのオンラインカスタマイズ",
   "app.subtitle": "パッケージを選び、クラウドで自動ビルド。カプチーノを飲みながらオープンソースの時代を迎えよう",
   "app.desc": "OpenWrt ファームウェアのオンラインカスタマイズ:ソースを選び、プラグインにチェックを入れて GitHub Actions でクラウドビルド、無料で入手できます",
@@ -3165,6 +3171,7 @@
   "import.leaveWorkspaceConfirm": "Changing the Target exits the uploaded-configuration workspace and starts a new web configuration. Continue?"
  },
  "ko": {
+  "group.Other": "기타",
   "app.title": "OpenWrt 펌웨어 온라인 커스터마이징",
   "app.subtitle": "패키지를 고르고 클라우드에서 자동 빌드한 뒤, 카푸치노와 함께 오픈 소스 시대를 맞이하세요",
   "app.desc": "OpenWrt 펌웨어 온라인 커스터마이징: 소스를 고르고 플러그인을 체크하면 GitHub Actions가 클라우드에서 빌드해요. 무료로 받아 가요",
@@ -3679,6 +3686,7 @@
   "import.leaveWorkspaceConfirm": "Changing the Target exits the uploaded-configuration workspace and starts a new web configuration. Continue?"
  },
  "de": {
+  "group.Other": "Sonstige",
   "app.title": "OpenWrt-Firmware online konfigurieren",
   "app.subtitle": "Pakete auswählen, in der Cloud bauen, einen Cappuccino genießen und das Open-Source-Zeitalter begrüßen",
   "app.desc": "OpenWrt-Firmware online konfigurieren: Quelle wählen, Pakete anhaken, Cloud-Build mit GitHub Actions, kostenlos abholen",
@@ -4193,6 +4201,7 @@
   "import.leaveWorkspaceConfirm": "Changing the Target exits the uploaded-configuration workspace and starts a new web configuration. Continue?"
  },
  "fr": {
+  "group.Other": "Autres",
   "app.title": "Firmware OpenWrt personnalisé en ligne",
   "app.subtitle": "Choisissez les paquets, compilez dans le cloud, savourez un cappuccino et accueillez l’ère du logiciel libre",
   "app.desc": "Firmware OpenWrt personnalisé en ligne : choisissez la source, cochez les plugins, compilation cloud via GitHub Actions, récupération gratuite",
@@ -4707,6 +4716,7 @@
   "import.leaveWorkspaceConfirm": "Changing the Target exits the uploaded-configuration workspace and starts a new web configuration. Continue?"
  },
  "vi": {
+  "group.Other": "Khác",
   "app.title": "Tùy chỉnh firmware OpenWrt trực tuyến",
   "app.subtitle": "Chọn gói, để đám mây tự biên dịch, nhâm nhi cappuccino và chào đón kỷ nguyên mã nguồn mở",
   "app.desc": "Tùy chỉnh firmware OpenWrt trực tuyến: chọn mã nguồn, tích chọn plugin, biên dịch cloud bằng GitHub Actions, tải về miễn phí",
