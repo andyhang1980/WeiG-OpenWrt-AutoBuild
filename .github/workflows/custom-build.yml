@@ -910,6 +910,14 @@ jobs:
         if: success()
         run: node tools/collect-optional-packages.mjs --config openwrt/.config --bin openwrt/bin --out optional-packages
 
+      - name: Enforce flash size limit / 校验闪存体积
+        if: success()
+        env:
+          TARGET_SYSTEM: ${{ steps.req.outputs.target_system }}
+          TARGET_SUBTARGET: ${{ steps.req.outputs.target_subtarget }}
+          TARGET_PROFILE: ${{ steps.req.outputs.target_profile }}
+        run: node tools/check-flash-size.mjs --targets openwrt/bin/targets --limits config/flash-limits.json
+
       - name: Check disk usage / 检查空间
         if: (!cancelled())
         run: df -hT

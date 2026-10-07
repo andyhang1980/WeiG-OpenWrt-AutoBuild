@@ -167,6 +167,7 @@ const expectedConfigEntries = new Set([
   'config/policies/package-mirrors.json',
   'config/build.json',
   'config/build.schema.json',
+  'config/flash-limits.json',
 ]);
 if (configEntries.length === expectedConfigEntries.size && configEntries.every((entry) => expectedConfigEntries.has(entry))) {
   pass('AutoBuild has one canonical build config and one small runtime policy');

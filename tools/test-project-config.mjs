@@ -76,9 +76,9 @@ assert.deepEqual(runtimeSite.customization, {
   firmware: sourceSite.firmware,
   build: sourceSite.build,
 }, 'runtime projection must expose only derived compatibility customization');
-assert.equal(runtimeSite.links.repository, 'https://github.com/weigefenxiang/WeiG-OpenWrt-AutoBuild');
-assert.equal(runtimeSite.links.actions, 'https://github.com/weigefenxiang/WeiG-OpenWrt-AutoBuild/actions');
-assert.equal(runtimeSite.links.catalog, 'https://github.com/weigefenxiang/WeiG-OpenWrt-Menuconfig-Catalog');
+assert.equal(runtimeSite.links.repository, 'https://github.com/andyhang1980/WeiG-OpenWrt-AutoBuild');
+assert.equal(runtimeSite.links.actions, 'https://github.com/andyhang1980/WeiG-OpenWrt-AutoBuild/actions');
+assert.equal(runtimeSite.links.catalog, 'https://github.com/andyhang1980/WeiG-OpenWrt-Menuconfig-Catalog');
 assert.equal(runtimeSite.links.blog, sourceSite.project.blogUrl);
 assert.equal(runtimeSite.links.guide, sourceSite.project.guideUrl);
 const legacySite = clone(sourceSite);
