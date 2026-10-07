@@ -64,7 +64,10 @@ try {
       }
       globalThis.__compatibilityTest = { loaded, id, expected: [...plans.recommended.steps,
         ...(plans.recommended.requiredTargets || []), ...(plans.recommended.retainedTargets || [])] };
-      openCompatibilityWarningModal(evaluation, warning, plans);
+      globalThis.__compatibilityResult = null;
+      withUiOperation('warning regression', () => withUiOperationInteraction(() =>
+        openCompatibilityWarningModal(evaluation, warning, plans)))
+        .then(action => { globalThis.__compatibilityResult = action; });
       return { source: state.source.id, branch: state.version.branch, steps: plans.recommended.steps,
         retained: plans.recommended.retainedTargets || [] };
     }`, [document, sha256, id]);
@@ -91,6 +94,11 @@ try {
     await evaluate(`() => { document.querySelector('#modalBody .compatibility-recommended').click(); return true; }`);
     await waitFor('recommendation transaction settled', () => evaluate(`() =>
       document.querySelector('#modalBody .compatibility-recommendation')?.classList.contains('is-applied')`), 60000);
+    assert(await evaluate(`() => !$('modal').hidden && $('app').getAttribute('aria-busy') === 'false' &&
+      !document.body.classList.contains('ui-operation-busy') &&
+      $('modalBody').querySelector('.configuration-continue') &&
+      $('modalBody').querySelector('.configuration-review') && __compatibilityResult === null`),
+      'applied warning must remain visible, idle and unconfirmed');
     const final = await evaluate(`() => {
       const test = __compatibilityTest;
       if (!compatibilityTargetsResolved(test.expected)) throw Error('Recommended or retained target changed');
@@ -107,10 +115,11 @@ try {
       const roundtrip = CATALOG_ENGINE.evaluateCompatibilityRules(CATALOG_MODEL, test.loaded.compatibility,
         rebuilt, compatibilityContext());
       if (roundtrip.warnings.some(row => row.rule.id === test.id)) throw Error('Schema-6 override roundtrip failed');
-      closeModal();
       return { values: test.expected.map(target => [target.symbol, exported.get(target.symbol) ?? 'n']),
         overrides, source: state.source.id, branch: state.version.branch };
     }`);
+    await evaluate(`() => $('modalBody').querySelector('.configuration-continue').click()`);
+    await waitFor('explicit warning confirmation', () => evaluate(`() => __compatibilityResult === 'applied' && !activeUiOperation`), 60000);
     writeFileSync(join(output, id + '-result.json'), JSON.stringify({ initial, final }, null, 2) + '\n');
     console.log('[compatibility-browser] PASS ' + id + ' ' + initial.source + '/' + initial.branch);
   }

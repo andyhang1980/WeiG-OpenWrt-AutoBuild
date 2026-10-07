@@ -430,7 +430,14 @@ expect(html.includes('class="ui-tooltip" id="uiTooltip"') &&
   sharedTooltipContract.includes("uiTooltip.classList.toggle('is-pinned', uiTooltipPinned)") &&
   sharedTooltipContract.includes("uiTooltip.classList.remove('is-pinned')") &&
   sharedTooltipContract.includes('function bindUiTooltipContent(target') &&
-  sharedTooltipContract.includes("document.addEventListener('pointermove'") &&
+  !sharedTooltipContract.includes("document.addEventListener('pointermove'") &&
+  sharedTooltipContract.includes('const UI_TOOLTIP_DELAY_MS = 700') &&
+  sharedTooltipContract.includes('function cancelPendingUiTooltip()') &&
+  sharedTooltipContract.includes('queueDatasetTooltip(target)') &&
+  sharedTooltipContract.includes('function dismissUiTooltipsWithin(owner, force = false)') &&
+  !app.includes('function hideMenuTooltip(') &&
+  app.includes("dismissUiTooltipsWithin($('menuconfigBody'))") &&
+  sharedTooltipContract.includes('pinned && uiTooltipActions.get(target)') &&
   sharedTooltipContract.includes("document.addEventListener('dblclick'") &&
   sharedTooltipContract.includes("document.addEventListener('contextmenu'") &&
   sharedTooltipContract.includes("if (!target || target.closest('.plugin')) return;") &&
@@ -447,14 +454,14 @@ expect(html.includes('class="ui-tooltip" id="uiTooltip"') &&
   css.includes(':is([data-ui-tooltip-title],[data-ui-tooltip-emphasis],[data-ui-tooltip-body]){touch-action:manipulation}') &&
   app.includes("bindUiTooltipContent($('menuconfigStateHelp'), { body: help })") &&
   app.includes('key: `CONFIG_${option.symbol}:${stateValue}`') &&
-  app.includes('if (value === stateValue) return;') &&
+  uiComponents.includes("button.getAttribute('aria-pressed') !== 'true'") &&
   (app.match(/\.title\s*=/g) || []).length === 1 &&
   !html.includes(' title="') &&
   !pageShell.includes('.title =') &&
   !uiComponents.includes('.title =') &&
   !packageProbeV3.includes('.title =') &&
   !app.includes('function showMenuPopup(') && !app.includes('function showPopover('),
-  'shared pointer-following tooltip template or content-bound positioning regressed');
+  'shared delayed anchor tooltip template or content-bound positioning regressed');
 expect(app.includes("dataset.uiTooltipTitle = 'D · Defconfig'") &&
   app.includes("const defconfigEmphasis = t('runtime.f891591b9e6d')") &&
   app.includes("const defconfigHelp = t('runtime.095a4944190f')") &&
@@ -465,14 +472,15 @@ expect(app.includes("dataset.uiTooltipTitle = 'D · Defconfig'") &&
   app.includes("removeAttribute('title')"),
   'Defconfig compact warning or shared tooltip binding regressed');
 expect(pluginRenderContract.includes('const applyChecked = (checked) => {') &&
-  pluginRenderContract.includes('bindUiTooltipContent(item, { title: pName(p), body: tooltipBody })') &&
-  pluginRenderContract.includes('bindUiTooltipContent(nameBtn, { title: pName(p), body: tooltipBody })') &&
+  pluginRenderContract.includes('bindUiTooltipContent(item, tooltip)') &&
+  pluginRenderContract.includes('bindUiTooltipContent(nameBtn, tooltip)') &&
   !pluginRenderContract.includes("item.addEventListener('dblclick'") &&
   !pluginRenderContract.includes('if (curatedPluginChecked(p, st, catalogOption) && cb.checked) return;') &&
   !pluginRenderContract.includes('applyChecked(true);') &&
-  !pluginRenderContract.includes('nameBtn.title = detail'),
+  !pluginRenderContract.includes('nameBtn.title = detail') &&
   pluginRenderContract.includes("item.addEventListener('click'") &&
-  pluginRenderContract.includes("event.target.closest('.plugin-dependency-toggle')") &&
+  !pluginRenderContract.includes('plugin-dependency-toggle') &&
+  pluginRenderContract.includes('onClick: () => openCatalogDependencyDetails(catalogOption)') &&
   pluginRenderContract.includes('applyChecked(!cb.checked)'),
   'plugin card selection or shared right-click tooltip binding regressed');
 const originSlotContract = app.match(/function renderCatalogOriginSlot\(option, origin\) \{[\s\S]*?\n\}/)?.[0] || '';
@@ -669,7 +677,7 @@ expect(app.includes("validationOptions: { ...context.validationOptions, scope: '
   !app.includes('openCatalogConflictModal') &&
   !setMenuValueContract.includes('loadCompatibilityEvaluation') &&
   app.includes('function catalogDependencyAnalysis(option)') &&
-  pluginRenderContract.includes("details.onclick = (event) => { event.stopPropagation(); openCatalogDependencyDetails") &&
+  pluginRenderContract.includes('onClick: () => openCatalogDependencyDetails(catalogOption)') &&
   app.includes("renderGroups({ incremental: true })") &&
   css.includes('.catalog-dependency-details{') && css.includes('max-height:60dvh') &&
   css.includes('overflow-x:hidden'),
@@ -679,13 +687,14 @@ const hiddenDerivedContract = app.match(/function hiddenDerivedOptionActive\(opt
 const importedDefaultContract = app.match(/function reconcileImportedConditionalDefaults\(options = \{\}\) \{[\s\S]*?\n\}/)?.[0] || '';
 expect(app.includes('function optionStateConstraints(option)') &&
   (app.match(/CATALOG_ENGINE\.kconfigStateConstraints/g) || []).length >= 2 &&
-  renderMenuOptionContract.includes("for (const stateValue of ['n', 'm', 'y'])") &&
+  uiComponents.includes("for (const stateValue of ['n', 'm', 'y'])") &&
   renderMenuOptionContract.includes('actions.appendChild(renderCatalogOriginSlot(option, origin))') &&
   renderMenuOptionContract.indexOf('actions.appendChild(renderCatalogOriginSlot(option, origin))') <
-    renderMenuOptionContract.indexOf("for (const stateValue of ['n', 'm', 'y'])") &&
-  renderMenuOptionContract.includes("spacer.className = 'kconfig-state-spacer'") &&
-  app.includes("button.setAttribute('aria-disabled', String(!stateConstraint.selectable))") &&
-  app.includes('showDatasetTooltip(button, event)') &&
+    renderMenuOptionContract.indexOf('UI_COMPONENTS.createUiKconfigStateControl') &&
+  renderMenuOptionContract.includes('UI_COMPONENTS.createUiKconfigStateControl') &&
+  uiComponents.includes("spacer.className = 'kconfig-state-spacer'") &&
+  uiComponents.includes("button.setAttribute('aria-disabled', String(!state?.selectable))") &&
+  app.includes('onUnavailable: showDatasetTooltip') &&
   app.includes('function kconfigConstraintTooltip(option, stateValue, constraints)') &&
   css.includes('.menuconfig-origin-slot{display:flex;flex:none;width:72px') &&
   !css.includes('.menuconfig-restore-slot{') && !css.includes('.menuconfig-restore-default{') &&

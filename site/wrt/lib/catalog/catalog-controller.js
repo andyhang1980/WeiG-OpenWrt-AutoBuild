@@ -609,9 +609,6 @@ function bindMenuOptionTooltip(element) {
   element.dataset.uiTooltipSource = 'menu-option';
   return element;
 }
-function hideMenuTooltip(force = false) {
-  hideUiTooltip(force);
-}
 function classifyCatalogLoadFailure(errorText = '', diagnostics = [], online = true) {
   const failedRows = (Array.isArray(diagnostics) ? diagnostics : []).filter((row) => row?.ok === false);
   const combined = [

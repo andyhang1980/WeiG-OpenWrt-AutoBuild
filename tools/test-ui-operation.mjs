@@ -4,7 +4,7 @@ import vm from 'node:vm';
 const source = readFileSync(new URL('../site/wrt/lib/ui/ui-runtime.js', import.meta.url), 'utf8');
 const begin = source.indexOf('let activeUiOperation'), end = source.indexOf('/*', begin);
 class Element {
-  constructor(tag = 'div') { this.tagName = tag.toUpperCase(); this.children = []; this.inert = false; this.isConnected = true; this.attributes = {}; this.classList = { toggle() {} }; }
+  constructor(tag = 'div') { this.tagName = tag.toUpperCase(); this.children = []; this.inert = false; this.isConnected = true; this.attributes = {}; this.classes = new Set(); this.classList = { toggle: (key, enabled) => enabled ? this.classes.add(key) : this.classes.delete(key) }; }
   append(...children) { this.children.push(...children); }
   setAttribute(key, value) { this.attributes[key] = value; }
   querySelector(selector) { for (const child of this.children) { if (child.className === selector.slice(1)) return child; const found = child.querySelector(selector); if (found) return found; } return null; }
@@ -27,12 +27,16 @@ await run(`withUiOperation('Import', async (operation) => {
   globalThis.duplicateRejected = rejected;
   await withUiOperationInteraction(async () => {
     globalThis.dialogAccessible = !$('modal').inert && $('app').inert;
-    await withUiComputation('Recommendation', () => { globalThis.nestedLocked = $('modal').inert; });
+    globalThis.dialogNotBusy = $('app').attributes['aria-busy'] === 'false' && !document.body.classes.has('ui-operation-busy');
+    await withUiComputation('Recommendation', () => { globalThis.nestedLocked = $('modal').inert;
+      globalThis.computationBusy = $('app').attributes['aria-busy'] === 'true' && document.body.classes.has('ui-operation-busy'); });
     globalThis.dialogRestored = !$('modal').inert && $('app').inert;
+    globalThis.dialogBusyRestored = $('app').attributes['aria-busy'] === 'false' && !document.body.classes.has('ui-operation-busy');
   });
   await operation.checkpoint('Done');
 })`);
-for (const key of ['locked', 'duplicateRejected', 'dialogAccessible', 'nestedLocked', 'dialogRestored']) assert.equal(context[key], true, key);
+for (const key of ['locked', 'duplicateRejected', 'dialogAccessible', 'nestedLocked', 'dialogRestored',
+  'dialogNotBusy', 'computationBusy', 'dialogBusyRestored']) assert.equal(context[key], true, key);
 assert.equal(app.inert, false); assert.equal(modal.inert, false); assert.equal(focus.focused, true);
 assert.equal(run('activeUiOperation'), null);
 await assert.rejects(run(`withUiOperation('Failure', () => { throw new Error('fixture'); })`), /fixture/);

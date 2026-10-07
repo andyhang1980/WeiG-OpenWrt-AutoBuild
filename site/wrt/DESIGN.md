@@ -123,6 +123,13 @@ Compatibility and configuration-preflight dialogs use the shared modal shell:
 the header and action footer stay visible, while only the middle content
 scrolls within the viewport. Evidence remains available in expandable details;
 long paths and commit references wrap without horizontal overflow.
+Advanced menuconfig, configuration preflight and build warnings use the same
+N/M/Y presentation component and Catalog-provided constraints. A review shows
+current → proposed values and distinguishes explicit operations from automatic
+dependency changes. Applying either recommendations or custom values keeps the
+result visible; only a separate confirmation continues export/submission.
+Closing an applied review cancels continuation, without discarding the visible
+configuration edits. Waiting for user input is not a busy/computing state.
 
 Do:
 
@@ -150,6 +157,12 @@ browser zoom.
   wrap text, and scroll vertically only when the available height is exceeded.
   Right-click pins a copyable tooltip; its normal browser copy menu remains available.
   Plugin cards toggle on a whole-card click, without a competing double-click pin.
+  Hover waits 700ms and leaving cancels it; keyboard focus remains immediate.
+  Mouse movement does not remeasure a card-anchored tooltip. Preserve fractional
+  intrinsic width when rounding layout pixels so one character is not orphaned.
+  Cards have no permanent dependency row. A pinned tooltip provides the explicit
+  dependency/restriction action, which reuses the existing recommendation panel;
+  hovering itself never runs a dependency planner or build compatibility scan.
 - Respect `env(safe-area-inset-*)` on every fixed or sticky edge.
 - A modal, tooltip, Build Information card, font panel, catalog menu, and
   floating dock must have a bounded height and an internal scroll path when

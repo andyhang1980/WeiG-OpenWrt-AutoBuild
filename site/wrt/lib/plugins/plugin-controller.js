@@ -336,27 +336,22 @@ function renderPlugin(p) {
   const size = Number.isSafeInteger(p.sizeBytes) && p.sizeBytes >= 0
     ? t('drawer.size', { n: fmtSize(p.sizeBytes) }) : '';
   const tooltipBody = displayText(detail) + '\n' + displayText(pkg) + (size ? ' · ' + size : '');
-  bindUiTooltipContent(item, { title: pName(p), body: tooltipBody });
-  bindUiTooltipContent(nameBtn, { title: pName(p), body: tooltipBody });
+  const tooltip = { title: pName(p), body: tooltipBody, key: `plugin:${p.id}`,
+    action: catalogOption ? {
+      label: t(st === 'unavailable' ? 'dependency.reason' : 'dependency.toggle'),
+      onClick: () => openCatalogDependencyDetails(catalogOption),
+    } : null };
+  bindUiTooltipContent(item, tooltip);
+  bindUiTooltipContent(nameBtn, tooltip);
   nameBtn.removeAttribute('title');
   nameBtn.setAttribute('aria-pressed', String(cb.checked));
   item.addEventListener('click', (event) => {
-    if (event.target === cb || event.target.closest('.plugin-dependency-toggle')) return; // Separate details from Intent.
+    if (event.target === cb) return;
     if (cb.disabled) { showDatasetTooltip(item, event); return; }
     applyChecked(!cb.checked);
     nameBtn.setAttribute('aria-pressed', String(cb.checked));
   });
   item.appendChild(nameBtn);
-  if (catalogOption) {
-    const details = document.createElement('button');
-    details.type = 'button'; details.className = 'plugin-dependency-toggle';
-    details.dataset.symbol = catalogOption.symbol;
-    details.textContent = t(st === 'unavailable' ? 'dependency.reason' : 'dependency.toggle');
-    details.setAttribute('aria-controls', 'catalogDependencyDetails');
-    details.setAttribute('aria-expanded', String(catalogDependencyDetails?.option.symbol === catalogOption.symbol));
-    details.onclick = (event) => { event.stopPropagation(); openCatalogDependencyDetails(catalogOption, { toggle: true }); };
-    item.appendChild(details);
-  }
   return item;
 }
 

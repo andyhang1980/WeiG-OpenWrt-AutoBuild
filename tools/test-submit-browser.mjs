@@ -132,6 +132,67 @@ try {
     }`, [payload, requestPath.split(/[\\/]/).at(-1)]);
     await ready(source);
     assert.equal(await evaluate(`() => configFirmwareSettings(buildFinalConfigText()).themeMode`), payload.firmware.themeMode);
+    if (source === 'iStoreOS') {
+      const reviewDirectory = mkdtempSync(join(directory, 'review-'));
+      await browser.connection.command('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: reviewDirectory });
+      const reviewBefore = new Set(readdirSync(reviewDirectory));
+      await evaluate(`() => {
+        globalThis.__reviewBaseline = snapshotCatalogUiState();
+        const option = menuOptionBySymbol.get('PACKAGE_luci-app-baidupcs-web');
+        if (!option) throw Error('Missing real absent-provider regression option');
+        applyCatalogIntent(option, 'y', false, 'user'); renderCatalogUiAfterIntent();
+        openSubmitModal(); document.querySelectorAll('#modalBody .method-card button')[2].click();
+      }`);
+      await waitFor('real configuration preflight', () => evaluate(`() =>
+        !$('modal').hidden && $('modalTitle').textContent === t('runtime.configurationPreflightTitle')`), 60000);
+      const review = await evaluate(`() => {
+        const buttons = [...$('modalBody').querySelectorAll('.catalog-conflict-state button')];
+        return { y: buttons.find(button => button.dataset.value === 'y')?.className,
+          aria: buttons.find(button => button.dataset.value === 'y')?.getAttribute('aria-pressed'),
+          preview: $('modalBody').querySelector('.configuration-review')?.textContent,
+          busy: $('app').getAttribute('aria-busy'), cursor: getComputedStyle(document.body).cursor };
+      }`);
+      assert.match(review.y, /is-current/); assert.match(review.y, /is-editable/);
+      assert.equal(review.aria, 'true'); assert.match(review.preview, /Y → N/);
+      assert.equal(review.busy, 'false'); assert.notEqual(review.cursor, 'progress');
+      await evaluate(`() => $('modalBody').querySelector('.compatibility-recommended').click()`);
+      await waitFor('applied review remains open', () => evaluate(`() =>
+        !$('modal').hidden && $('modalBody').querySelector('.configuration-continue') &&
+        $('app').getAttribute('aria-busy') === 'false'`), 60000);
+      assert.deepEqual(readdirSync(reviewDirectory).filter(name => !reviewBefore.has(name)), [],
+        'applying a recommendation must not download before confirmation');
+      assert.equal(await evaluate(`() => menuValues.get('PACKAGE_luci-app-baidupcs-web')`), 'n');
+      assert.match(await evaluate(`() => $('modalBody').querySelector('.configuration-review').textContent`), /Y → N/);
+      await evaluate(`() => $('modalBody').querySelector('.configuration-continue').click()`);
+      const reviewedPath = await waitFor('confirmed reviewed config download', () => {
+        const name = readdirSync(reviewDirectory).find(name => !reviewBefore.has(name) && name.endsWith('.config'));
+        return name && statSync(join(reviewDirectory, name)).size > 100 ? join(reviewDirectory, name) : null;
+      }, 60000);
+      assert.doesNotMatch(readFileSync(reviewedPath, 'utf8'), /^CONFIG_PACKAGE_luci-app-baidupcs-web=y$/m);
+      // Closing an applied review is cancellation, never an implicit submit.
+      await evaluate(`() => {
+        restoreCatalogUiState(__reviewBaseline); renderCatalogUiAfterIntent(); closeModal();
+        applyCatalogIntent(menuOptionBySymbol.get('PACKAGE_luci-app-baidupcs-web'), 'y', false, 'user');
+        globalThis.__reviewResult = null;
+        withUiOperation('review regression', () => withUiOperationInteraction(() =>
+          openConfigurationPreflightModal(configurationPreflightEvaluation())))
+          .then(action => { globalThis.__reviewResult = action; });
+      }`);
+      await waitFor('custom review visible', () => evaluate(`() =>
+        $('modalBody').querySelector('.catalog-conflict-state button[data-value="n"]') &&
+        $('app').getAttribute('aria-busy') === 'false'`), 60000);
+      await evaluate(`() => {
+        $('modalBody').querySelector('.catalog-conflict-state button[data-value="n"]').click();
+        $('modalBody').querySelector('.compatibility-custom').click();
+      }`);
+      await waitFor('custom result retained', () => evaluate(`() =>
+        $('modalBody').querySelector('.configuration-continue') && $('app').getAttribute('aria-busy') === 'false'`), 60000);
+      await evaluate(`() => closeModal()`);
+      await waitFor('applied review cancellation', () => evaluate(`() => __reviewResult === 'cancel' && !activeUiOperation`), 60000);
+      await evaluate(`() => { restoreCatalogUiState(__reviewBaseline); renderCatalogUiAfterIntent(); }`);
+      await browser.connection.command('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: directory });
+      console.log('[submit-browser] real provider-absent Y/N states, preview, explicit confirmation, custom review and cancellation passed');
+    }
     // Third method: actual .config download from the same configuration builder.
     const configBefore = new Set(readdirSync(directory));
     await evaluate(`() => { openSubmitModal(); document.querySelectorAll('#modalBody .method-card button')[2].click(); return true; }`);

@@ -90,9 +90,10 @@ try {
         }
         const after = $('pcb-' + id).checked;
         card().dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-        const pinned = $('uiTooltip').classList.contains('is-pinned'); hideUiTooltip(true);
+        const pinned = $('uiTooltip').classList.contains('is-pinned');
         const initial = $('pcb-' + id).checked;
-        card().querySelector('.plugin-dependency-toggle').click();
+        if (card().querySelector('.plugin-dependency-toggle')) throw Error('Persistent dependency row returned');
+        $('uiTooltipActions').querySelector('button').click();
         const detailUnchanged = $('pcb-' + id).checked === initial;
         return { before, after, pinned, detailUnchanged, samples, scans: __selectionScans,
           modal: !$('modal').hidden, stableCard: unchangedCard?.isConnected };
@@ -141,7 +142,9 @@ try {
     PLUGINS = { groups: ['Other'], plugins: [{ id:'fixture-application', pkg:'fixture-application', group:'Other',
       name:'Fixture application', desc:'Manual prerequisite fixture', catalogOnly:true }] };
     state.advanced=true; markCatalogStateChanged(); renderGroups();
-    $('pcb-fixture-application').closest('.plugin').querySelector('.plugin-dependency-toggle').click();
+    const card = $('pcb-fixture-application').closest('.plugin');
+    card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    $('uiTooltipActions').querySelector('button').click();
   }`);
   const manual = await ev(`() => {
     const panel=document.querySelector('.catalog-dependency-details');
