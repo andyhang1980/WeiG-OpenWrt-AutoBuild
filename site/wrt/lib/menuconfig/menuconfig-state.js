@@ -6,6 +6,8 @@
  */
 'use strict';
 
+let catalogNativeIntentModel = null, catalogNativeIntentRevision = -1;
+
 function resetCatalogSelectionLayers() {
   menuValues.clear();
   menuTouched.clear();
@@ -486,10 +488,12 @@ function evaluateCatalogIntent(option, value, force = false, assignments = null)
   }
   return CATALOG_ENGINE.applyUserIntent(CATALOG_MODEL, context.values, {
     symbol: option.symbol, value, force,
+    incremental: catalogNativeIntentModel === CATALOG_MODEL && catalogNativeIntentRevision === catalogStateRevision,
     ...(assignments ? { assignments } : {}),
     dependencySymbols: catalogDependencySymbols, protectedSymbols,
     preferredValues: catalogPreferredValues(), explicitSymbols: catalogUserOverrides.keys(),
-    derivedSymbols: catalogConditionalDefaultSymbols, validationOptions: context.validationOptions,
+    derivedSymbols: catalogConditionalDefaultSymbols, skipPrerequisitePlanning: true,
+    validationOptions: { ...context.validationOptions, scope: 'menuconfig' },
   });
 }
 function applyCatalogIntent(option, value, force = false, source = 'user', assignments = null) {
@@ -564,6 +568,7 @@ function applyCatalogIntent(option, value, force = false, source = 'user', assig
       }
     }
     if (result.changes.length || directIntentChanged) markCatalogStateChanged();
+    catalogNativeIntentModel = CATALOG_MODEL; catalogNativeIntentRevision = catalogStateRevision;
     return result;
   } catch (error) {
     restoreCatalogUiState(snapshot);
@@ -660,60 +665,15 @@ function applyMenuValue(option, value, force = false, source = 'user') {
     ? applyScalarMenuValue(option, value, source)
     : applyCatalogIntent(option, value, force, source);
 }
-function catalogConflictRecordForPackage(name) {
-  return CATALOG_MODEL?.byPackage?.get(String(name || '')) || null;
-}
 // Shared package identity for application cards, probes and size accounting.
 // PACKAGE_* also names ordinary Kconfig suboptions; a prefix is not proof.
 function catalogPackageRecordForSymbol(symbol) {
   const record = CATALOG_MODEL?.bySymbol?.get(String(symbol || ''));
-  return record?.package && catalogConflictRecordForPackage(record.package) === record ? record : null;
-}
-function catalogConflictRows(option, requestedValue, violations) {
-  const symbols = new Set([option.symbol]);
-  for (const violation of violations || []) {
-    if (violation.code === 'package-conflict') {
-      const left = catalogConflictRecordForPackage(violation.package);
-      if (left?.configSymbol) symbols.add(left.configSymbol);
-      for (const packageName of [violation.otherPackage, ...(violation.otherPackages || [])]) {
-        const right = catalogConflictRecordForPackage(packageName);
-        if (right?.configSymbol) symbols.add(right.configSymbol);
-      }
-    } else if (violation.code === 'choice-conflict') {
-      for (const symbol of violation.symbols || []) symbols.add(symbol);
-    }
-  }
-  return [...symbols].slice(0, 18).map((symbol) => {
-    const record = CATALOG_MODEL?.bySymbol?.get(symbol);
-    const menuOption = menuOptionBySymbol.get(symbol);
-    if (!record || !menuOption) return null;
-    return {
-      symbol,
-      record,
-      option: menuOption,
-      label: record.package || symbol.replace(/^PACKAGE_/, ''),
-      requested: symbol === option.symbol ? requestedValue : null,
-    };
-  }).filter(Boolean);
-}
-function catalogConflictPlanInvalid(plan, violations) {
-  for (const violation of violations || []) {
-    if (violation.code === 'package-conflict') {
-      const left = catalogConflictRecordForPackage(violation.package)?.configSymbol;
-      const rightSymbols = [violation.otherPackage, ...(violation.otherPackages || [])]
-        .map((packageName) => catalogConflictRecordForPackage(packageName)?.configSymbol).filter(Boolean);
-      if (left && rightSymbols.some((right) =>
-        (plan.get(left) || 'n') !== 'n' && (plan.get(right) || 'n') !== 'n')) return true;
-    }
-    if (violation.code === 'choice-conflict') {
-      const enabled = (violation.symbols || []).filter((symbol) => (plan.get(symbol) || 'n') !== 'n');
-      if (enabled.length > 1) return true;
-    }
-  }
-  return false;
+  return record?.package && CATALOG_MODEL.byPackage.get(record.package) === record ? record : null;
 }
 function snapshotCatalogUiState() {
   return {
+    nativeIntentModel: catalogNativeIntentModel, nativeIntentRevision: catalogNativeIntentRevision,
     values: new Map(menuValues), touched: new Set(menuTouched), selected: new Set(state.sel),
     removed: new Set(state.removed), dependencies: new Set(catalogDependencySymbols),
     conditionalDefaults: new Set(catalogConditionalDefaultSymbols),
@@ -732,6 +692,8 @@ function restoreSet(target, source) {
   for (const value of source) target.add(value);
 }
 function restoreCatalogUiState(snapshot) {
+  catalogNativeIntentModel = snapshot.nativeIntentModel || null;
+  catalogNativeIntentRevision = snapshot.nativeIntentRevision ?? -1;
   restoreMap(menuValues, snapshot.values);
   restoreSet(menuTouched, snapshot.touched);
   restoreSet(state.sel, snapshot.selected);
@@ -750,8 +712,7 @@ function renderCatalogUiAfterIntent(openChildren = false, option = null, value =
   if (openChildren && value !== 'n' && option) openMenuChildren(option);
   renderMenuconfig();
   renderFirmwareSettings();
-  renderGroups();
+  renderGroups({ incremental: true });
   updateStats();
-  renderBuildContract();
   updateSubmitGate();
 }

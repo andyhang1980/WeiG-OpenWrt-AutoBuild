@@ -1297,6 +1297,7 @@ async function loadCatalog(source, branch, applyDefault = true, requested = null
     const activeSource = active.source || source;
     const activeBranch = active.branch || branch;
     CATALOG_MODEL = remote.model;
+    CATALOG_ENGINE.prepareKconfigWorklist(CATALOG_MODEL);
     catalogShardLoader = remote.loadShard || null;
     PROFILE_BASELINE_STORE = null;
     ACTIVE_PROFILE_BASELINE = null;

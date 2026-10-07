@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { applyUserIntent, createCatalogModel, deriveConfigurationRepairPlan,
-  deriveCompatibilityPlans, evaluateCompatibilityRules, normalizeCompatibilityDocument,
+  deriveCompatibilityPlans, deriveKconfigPrerequisitePlans, evaluateCompatibilityRules, normalizeCompatibilityDocument,
   parseConfigDocument, validateConfig } from '../site/wrt/lib/catalog-engine.js';
 import { serializeConfigMap } from '../site/wrt/lib/profile-baseline.js';
 
@@ -44,6 +44,57 @@ const shared = applyUserIntent(model, new Map([['PACKAGE_interface', 'y'], ['PAC
   ['PACKAGE_admin', 'y'], ['PACKAGE_shared-user', 'y']]), { symbol: 'PACKAGE_interface', value: 'n',
   dependencySymbols: new Set(['PACKAGE_admin', 'PACKAGE_daemon']) });
 assert.equal(shared.values.get('PACKAGE_admin'), 'y', 'a surviving installed consumer requires the shared runtime');
+
+// Native menu edits never guess installation dependencies or silently open a
+// depends-on prerequisite. The exact same facts remain available to preflight.
+const nativeOptions = { scope: 'menuconfig', deferred: 'error' };
+const nativeInstalled = applyUserIntent(model, new Map(), { symbol: 'PACKAGE_interface', value: 'y',
+  validationOptions: nativeOptions, skipPrerequisitePlanning: true });
+assert.equal(nativeInstalled.values.get('PACKAGE_interface'), 'y');
+assert.notEqual(nativeInstalled.values.get('PACKAGE_admin'), 'y');
+assert(validateConfig(model, nativeInstalled.values).some(row => row.installation),
+  'menuconfig selection must not hide installation risk from explicit preflight');
+assert.deepEqual(validateConfig(model, nativeInstalled.values, nativeOptions), []);
+
+const conditionalModel = createCatalogModel({ schema: 6, relations: { schema: 2, indexes: {}, records: [
+  pkg('application', { kconfig: { selectsExpressions: [['PACKAGE_server']] } }),
+  pkg('server', { kconfig: { selectsExpressions: [['PACKAGE_modern if FEATURE', 'PACKAGE_legacy if !FEATURE']] },
+    packageInfo: { installation: { runtime: { schema: 1, dependencies: [], unresolved: ['legacy (>= 1)'] } } } }),
+  { configSymbol: 'FEATURE', type: 'bool', states: ['n', 'y'], defaults: ['y'],
+    kconfig: { dependsExpressions: [['PACKAGE_server']] } },
+  pkg('modern'), pkg('legacy', { kconfig: { dependsExpressions: [['m || (PACKAGE_modern != y)']] } }),
+] } });
+const conditional = applyUserIntent(conditionalModel, new Map(), { symbol: 'PACKAGE_application', value: 'y',
+  validationOptions: { ...nativeOptions, closedSymbols: new Set(['FEATURE']) }, skipPrerequisitePlanning: true });
+assert.equal(conditional.values.get('FEATURE'), 'y', 'use the active native default, not an explicit prerequisite patch');
+assert.equal(conditional.values.get('PACKAGE_modern'), 'y');
+assert.equal(conditional.values.get('PACKAGE_legacy'), 'n', 'frozen unsupported installation facts retained an obsolete select');
+assert(validateConfig(conditionalModel, conditional.values, { deferred: 'error' }).some(row => row.deferred),
+  'unknown installation syntax must still be visible at preflight');
+
+const missingModel = createCatalogModel({ schema: 6, relations: { schema: 2,
+  packageClosureComplete: true, packageClosureCapabilities: ['complete-package-build-closure-v1'],
+  packageClosureValidation: { metadataComplete: true },
+  records: [pkg('missing-consumer', { kconfig: { selectsExpressions: [['PACKAGE_missing-provider']] },
+    packageInfo: { depends: [{ raw: '+missing-provider', required: true, packages: ['missing-provider'] }] } })] } });
+const missing = applyUserIntent(missingModel, new Map(), { symbol: 'PACKAGE_missing-consumer', value: 'y',
+  validationOptions: nativeOptions, skipPrerequisitePlanning: true });
+assert.equal(missing.values.get('PACKAGE_missing-consumer'), 'y');
+assert(!missing.values.has('PACKAGE_missing-provider'), 'undefined native select fabricated a provider');
+assert(validateConfig(missingModel, missing.values).some(row => row.reason === 'provider-absent'));
+
+const manualModel = createCatalogModel({ schema: 6, relations: { schema: 2, records: [
+  pkg('manual', { kconfig: { dependsExpressions: [['PACKAGE_prerequisite']] } }), pkg('prerequisite'),
+] } });
+assert.throws(() => applyUserIntent(manualModel, new Map([['PACKAGE_prerequisite', 'n']]), {
+  symbol: 'PACKAGE_manual', value: 'y', validationOptions: nativeOptions, skipPrerequisitePlanning: true,
+}), error => error.name === 'CatalogIntentError' && !error.prerequisitePlans,
+'ordinary menu edits must not guess/plan positive depends-on prerequisites');
+const manualIntent = { validationOptions: nativeOptions, planningBudget: { maxNodes: 1, timeMs: 250 } };
+const exhausted = deriveKconfigPrerequisitePlans(manualModel, new Map([['PACKAGE_prerequisite', 'n']]),
+  manualModel.byPackage.get('manual'), 'y', manualIntent);
+assert.equal(exhausted.recommended, null);
+assert.equal(exhausted.reason, 'search-budget', 'partial exploration cannot prove a unique recommendation');
 
 const retainedModel = createCatalogModel({ schema: 6, relations: { schema: 2, records: [
   pkg('frontend', { kconfig: { selectsExpressions: [['PACKAGE_backend']] } }), pkg('backend'),

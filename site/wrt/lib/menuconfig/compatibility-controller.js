@@ -24,252 +24,163 @@ function displayCompatibilityDetail(violation = {}) {
   return displayText(violation.dependency || violation.code || 'configuration-invalid');
 }
 
-function openKconfigPrerequisiteModal(option, value, error) {
-  const plan = error?.prerequisitePlans?.recommended;
-  if (!plan?.steps?.length) return false;
-  modalCancelHandler = null;
-  openModal(t('runtime.kconfigPrerequisiteTitle'));
-  const modal = $('modal').querySelector('.modal');
-  modal.classList.remove('modal-wide', 'modal-import-source', 'recommended-config',
-    'profile-package-config', 'generation-error', 'catalog-conflict', 'compatibility-warning', 'rootfs-guidance');
-  modal.classList.add('catalog-conflict', 'compatibility-warning');
-  const body = $('modalBody');
-  body.textContent = '';
-  const packageName = option.symbol?.startsWith('PACKAGE_')
-    ? option.symbol.slice('PACKAGE_'.length) : option.symbol;
-  const copy = document.createElement('p');
-  copy.className = 'catalog-conflict-copy';
-  copy.textContent = t('runtime.kconfigPrerequisiteSummary', { value1: displayText(packageName) });
-  body.appendChild(copy);
-  const requirement = kconfigRequirementText(
-    error.constraints?.dependencyExpressions || error.violations?.[0]?.requirements || [],
-  );
-  if (requirement) {
-    const requirementLine = document.createElement('p');
-    requirementLine.className = 'catalog-conflict-warning';
-    requirementLine.textContent = t('runtime.kconfigPrerequisiteRequirement', { value1: requirement });
-    body.appendChild(requirementLine);
+// Recommendations are an explicit, revision-scoped view over the existing engine.
+// No ordinary edit invokes this planner or an installation/compatibility scan.
+let catalogDependencyDetails = null;
+let catalogDependencyDetailsKey = '';
+const catalogDependencyDetailsCache = new Map();
+function catalogDependencyAnalysis(option) {
+  const key = `${menuCatalogKey}:${catalogStateRevision}`;
+  if (catalogDependencyDetailsKey !== key) {
+    catalogDependencyDetailsCache.clear(); catalogDependencyDetailsKey = key;
   }
+  if (catalogDependencyDetailsCache.has(option.symbol)) return catalogDependencyDetailsCache.get(option.symbol);
+  const context = catalogValidationContext(menuValues, 'interactive');
+  const record = CATALOG_MODEL.bySymbol.get(option.symbol);
+  const constraints = optionStateConstraints(option);
+  const intent = {
+    symbol: option.symbol, value: 'y', skipPrerequisitePlanning: true,
+    dependencySymbols: catalogDependencySymbols, protectedSymbols: catalogProtectedSymbols(),
+    explicitSymbols: new Set([...catalogUserOverrides.keys(), ...catalogProtectedSymbols()]),
+    preferredValues: catalogPreferredValues(), derivedSymbols: catalogConditionalDefaultSymbols,
+    validationOptions: { ...context.validationOptions, scope: 'menuconfig' },
+    planningBudget: { maxNodes: 128, timeMs: 250 },
+  };
+  let preview = null, plans = null, error = null;
+  try { preview = CATALOG_ENGINE.applyUserIntent(CATALOG_MODEL, context.values, intent); }
+  catch (failure) { error = failure; }
+  if (!preview && !constraints.readOnly) {
+    plans = CATALOG_ENGINE.deriveKconfigPrerequisitePlans(CATALOG_MODEL, context.values, record, 'y', intent);
+  }
+  const plan = plans?.recommended || null;
+  const projected = preview || plan;
+  const related = new Set([option.symbol, ...(projected?.changes || []).map(change => change.symbol)]);
+  const installation = projected ? CATALOG_ENGINE.validateConfig(CATALOG_MODEL, projected.values, {
+    ...context.validationOptions, deferred: 'error',
+  }).filter(row => related.has(row.symbol) && String(row.code).startsWith('package-dependency-')) : [];
+  // Cache presentation/operations, not thousands of effective value entries.
+  // Applying always replays the shared engine against the current revision.
+  const analysis = { constraints, error, installation,
+    plan: plan ? { steps: plan.steps, automaticChanges: plan.automaticChanges } : null,
+    preview: preview ? { changes: preview.changes } : null,
+    revision: catalogStateRevision, catalogKey: menuCatalogKey };
+  catalogDependencyDetailsCache.set(option.symbol, analysis);
+  return analysis;
+}
+function closeCatalogDependencyDetails() {
+  catalogDependencyDetails = null;
+  document.querySelectorAll('.catalog-dependency-details').forEach(element => element.remove());
+  refreshCatalogDependencyButtons();
+}
+function refreshCatalogDependencyButtons() {
+  document.querySelectorAll('.plugin-dependency-toggle').forEach(button => {
+    button.setAttribute('aria-expanded', String(button.dataset.symbol === catalogDependencyDetails?.option.symbol));
+  });
+}
+function openCatalogDependencyDetails(option, settings = {}) {
+  if (!option || !CATALOG_MODEL) return false;
+  if (settings.toggle && catalogDependencyDetails?.option.symbol === option.symbol &&
+      catalogDependencyDetails.catalogKey === menuCatalogKey) {
+    closeCatalogDependencyDetails(); return true;
+  }
+  const plugin = PLUGINS.plugins.find(p => curatedMenuOption(p)?.symbol === option.symbol);
+  const analysis = settings.error ? { error: settings.error, constraints: settings.error.constraints,
+    revision: catalogStateRevision, catalogKey: menuCatalogKey } : catalogDependencyAnalysis(option);
+  catalogDependencyDetails = { option, group: plugin?.group, pluginId: plugin?.id,
+    catalogKey: menuCatalogKey, analysis };
+  renderCatalogDependencyDetails();
+  return true;
+}
+function renderCatalogDependencyDetails() {
+  document.querySelectorAll('.catalog-dependency-details').forEach(element => element.remove());
+  if (!catalogDependencyDetails) return;
+  if (catalogDependencyDetails.catalogKey !== menuCatalogKey) { closeCatalogDependencyDetails(); return; }
+  const { option, group, pluginId, analysis } = catalogDependencyDetails;
+  const plugin = PLUGINS.plugins.find(p => p.id === pluginId);
+  const label = plugin ? pName(plugin) : displayConfigSymbol(option.symbol);
+  const host = [...$('groups').querySelectorAll('.group')].find(element => element.dataset.group === group) ||
+    $('menuconfigBody');
+  if (!host) return;
+  const panel = document.createElement('section');
+  panel.className = 'compatibility-recommendation catalog-dependency-details';
+  panel.id = 'catalogDependencyDetails';
+  panel.setAttribute('aria-label', t('dependency.title'));
+  const header = document.createElement('div');
+  header.className = 'compatibility-recommendation-header';
   const heading = document.createElement('strong');
   heading.className = 'compatibility-recommendation-title';
-  heading.textContent = t('runtime.kconfigPrerequisitePlan');
-  body.appendChild(heading);
-  const list = document.createElement('ol');
-  list.className = 'catalog-conflict-list';
-  for (const step of plan.steps) {
-    const item = document.createElement('li');
-    const symbol = document.createElement('code');
-    symbol.textContent = `${displayConfigSymbol(step.symbol, { kind: 'config' })}=${String(step.value || 'n').toUpperCase()}`;
-    item.appendChild(symbol);
-    list.appendChild(item);
-  }
-  const target = document.createElement('li');
-  target.className = 'compatibility-recommendation-action';
-  target.textContent = `${t('runtime.kconfigPrerequisiteTarget')}: ${displayConfigSymbol(option.symbol, { kind: 'config' })}=${String(value).toUpperCase()}`;
-  list.appendChild(target);
-  body.appendChild(list);
-  const automatic = (plan.automaticChanges || []).filter((change) => change.symbol !== option.symbol);
-  if (automatic.length) {
-    const automaticLine = document.createElement('p');
-    automaticLine.className = 'compatibility-recommendation-detail';
-    automaticLine.textContent = t('runtime.kconfigPrerequisiteAutomatic', {
-      value1: automatic.map((change) => `${displayConfigSymbol(change.symbol, { kind: 'config' })}=${String(change.to).toUpperCase()}`).join(', '),
-    });
-    body.appendChild(automaticLine);
-  }
-  const warning = document.createElement('p');
-  warning.className = 'catalog-conflict-warning';
-  body.appendChild(warning);
-  const actions = document.createElement('div');
-  actions.className = 'modal-actions compatibility-actions';
-  const cancel = document.createElement('button');
-  cancel.type = 'button'; cancel.className = 'btn'; cancel.textContent = t('btn.close');
-  cancel.onclick = closeModal;
-  const apply = document.createElement('button');
-  apply.type = 'button'; apply.className = 'btn btn-primary';
-  apply.textContent = t('runtime.kconfigPrerequisiteApply');
-  apply.onclick = () => {
-    const snapshot = snapshotCatalogUiState();
-    try {
-      const assignments = new Map(plan.steps.map((step) => [step.symbol, step.value]));
-      assignments.set(option.symbol, value);
-      applyCatalogIntent(option, value, false, 'user', assignments);
-      renderCatalogUiAfterIntent(false, option, menuValues.get(option.symbol) ?? value);
-      modalCancelHandler = null;
-      closeModal();
-    } catch (applyError) {
-      const rollback = snapshot;
-      restoreCatalogUiState(rollback);
-      warning.textContent = displayText(String(applyError?.message || applyError).split(';')[0]);
-    }
-  };
-  actions.append(cancel, apply);
-  UI_COMPONENTS.mountUiModalActions(body, actions);
-  modalCancelHandler = closeModal;
-  return true;
-}
-
-function openCatalogConflictModal(option, value, violations, openChildren = false) {
-  const rows = catalogConflictRows(option, value, violations);
-  if (rows.length < 2) return false;
-  const plan = new Map(rows.map((row) => [row.symbol, menuValues.get(row.symbol) ?? 'n']));
-  for (const row of rows) {
-    if (row.symbol !== option.symbol && row.record.canDisable) plan.set(row.symbol, 'n');
-  }
-  plan.set(option.symbol, value);
-  const edited = new Set([option.symbol]);
-  const assignments = () => new Map([...plan].filter(([symbol, next]) =>
-    edited.has(symbol) || next !== (menuValues.get(symbol) ?? 'n')));
-
-  modalCancelHandler = null;
-  openModal(t('runtime.c2d6e325fc5b'));
-  const modal = $('modal').querySelector('.modal');
-  modal.classList.remove('modal-wide', 'modal-import-source', 'recommended-config',
-    'profile-package-config', 'generation-error', 'catalog-conflict', 'rootfs-guidance');
-  modal.classList.add('catalog-conflict');
-  const body = $('modalBody');
-  body.textContent = '';
-  const copy = document.createElement('p');
-  copy.className = 'catalog-conflict-copy';
-  copy.textContent = t('runtime.e1e86e3baf44', { value1: displayText(rows[0].label) });
-  body.appendChild(copy);
-  const list = document.createElement('div');
-  list.className = 'catalog-conflict-list';
-  const warning = document.createElement('p');
-  warning.className = 'catalog-conflict-warning';
-  const actions = document.createElement('div');
-  actions.className = 'modal-actions';
-  const cancel = document.createElement('button');
-  cancel.type = 'button';
-  cancel.className = 'btn';
-  cancel.textContent = t('btn.close');
-  cancel.onclick = closeModal;
-  const apply = document.createElement('button');
-  apply.type = 'button';
-  apply.className = 'btn btn-primary';
-  apply.textContent = t('runtime.b62f9960932e');
-  const refresh = () => {
-    const context = catalogValidationContext(menuValues, 'interactive');
-    let values = new Map(context.values);
-    let evaluationError = null;
-    try {
-      values = evaluateCatalogIntent(option, plan.get(option.symbol), false, assignments()).values;
-    } catch (error) {
-      evaluationError = error;
-      for (const [symbol, stateValue] of plan) values.set(symbol, stateValue);
-    }
-    const constraintsBySymbol = new Map(rows.map((row) => [row.symbol,
-      CATALOG_ENGINE.kconfigStateConstraints(CATALOG_MODEL, row.record, values, context.validationOptions)]));
-    const stateInvalid = Boolean(evaluationError) || rows.some((row) => {
-      const constraints = constraintsBySymbol.get(row.symbol);
-      const stateRow = constraints.states.find((item) => item.value === values.get(row.symbol));
-      return !stateRow?.selectable && !(stateRow?.current && stateRow?.locked);
-    });
-    const conflictInvalid = catalogConflictPlanInvalid(values, violations);
-    const invalid = stateInvalid || conflictInvalid;
-    warning.textContent = evaluationError ? displayText(evaluationError.message) :
-      stateInvalid ? t('runtime.0f352e4ef93f') : conflictInvalid ? t('runtime.25739b377862') : '';
-    apply.disabled = invalid;
-    list.querySelectorAll('.catalog-conflict-row').forEach((line) => {
-      const activeValue = values.get(line.dataset.symbol) || 'n';
-      line.classList.toggle('is-invalid', invalid && activeValue !== 'n');
-      line.querySelectorAll('button[data-value]').forEach((button) => {
-        const active = activeValue === button.dataset.value;
-        const row = rows.find((item) => item.symbol === line.dataset.symbol);
-        const constraints = constraintsBySymbol.get(line.dataset.symbol);
-        const stateRow = constraints.states.find((item) => item.value === button.dataset.value);
-        button.classList.toggle('is-current', active);
-        button.classList.toggle('is-editable', Boolean(stateRow?.selectable));
-        button.classList.toggle('is-disabled', !stateRow?.selectable);
-        button.classList.toggle('is-locked', Boolean(active && stateRow?.locked));
-        button.setAttribute('aria-disabled', String(!stateRow?.selectable));
-        bindKconfigConstraintTooltip(button, row.option, button.dataset.value, constraints);
-      });
-    });
-  };
-
-  for (const row of rows) {
-    const line = document.createElement('div');
-    line.className = 'catalog-conflict-row';
-    line.dataset.symbol = row.symbol;
-    const name = document.createElement('code');
-    name.textContent = displayText(row.label);
-    bindUiTooltipContent(name, {
-      body: row.symbol.startsWith('PACKAGE_') ? displayConfigSymbol(row.symbol, { kind: 'config' }) : displayText(row.symbol),
-    });
-    const stateBox = document.createElement('span');
-    stateBox.className = 'catalog-conflict-state';
-    for (const stateValue of ['n', 'm', 'y']) {
-      if (row.record.type === 'bool' && stateValue === 'm') {
-        const spacer = document.createElement('span');
-        spacer.className = 'kconfig-state-spacer';
-        spacer.setAttribute('aria-hidden', 'true');
-        stateBox.appendChild(spacer);
-        continue;
-      }
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.dataset.value = stateValue;
-      button.textContent = stateValue.toUpperCase();
-      button.className = 'kconfig-state';
-      button.onclick = (event) => {
-        if (button.getAttribute('aria-disabled') === 'true') {
-          showDatasetTooltip(button, event);
-          return;
-        }
-        plan.set(row.symbol, stateValue);
-        edited.add(row.symbol);
-        refresh();
-      };
-      stateBox.appendChild(button);
-    }
-    line.append(name, stateBox);
-    list.appendChild(line);
-  }
-  body.append(list, warning);
-  actions.append(cancel, apply);
-  UI_COMPONENTS.mountUiModalActions(body, actions);
-  apply.onclick = () => {
-    const snapshot = snapshotCatalogUiState();
-    try {
-      applyCatalogIntent(option, plan.get(option.symbol), false, 'user', assignments());
-      modalCancelHandler = null;
-      closeModal();
-      renderCatalogUiAfterIntent(openChildren, option, plan.get(option.symbol) || 'n');
-    } catch (error) {
-      restoreCatalogUiState(snapshot);
-      warning.textContent = displayText(String(error?.message || error).split(';')[0]);
-      apply.disabled = false;
-    }
-  };
-  refresh();
-  return true;
-}
-
-// Non-repairable target restrictions and absent metadata providers still
-// deserve a persistent, copyable explanation, not a short-lived clipped toast.
-function openCatalogIntentDiagnostic(option, error) {
-  modalCancelHandler = null;
-  openModal(t('runtime.kconfigPrerequisiteTitle'));
-  const modal = $('modal').querySelector('.modal');
-  modal.classList.add('catalog-conflict');
-  const body = $('modalBody');
-  body.textContent = '';
-  const name = document.createElement('code');
-  name.textContent = displayConfigSymbol(option.symbol, { kind: 'config' });
-  const detail = document.createElement('p');
-  detail.className = 'catalog-conflict-warning';
-  detail.textContent = displayText(error.message);
-  const requirement = kconfigRequirementText(error.constraints?.dependencyExpressions || []);
-  if (requirement && !detail.textContent.includes(requirement)) detail.textContent += `\n${requirement}`;
-  body.append(name, detail);
-  const actions = document.createElement('div');
-  actions.className = 'modal-actions';
+  heading.textContent = `${t('dependency.title')} · ${label}`;
   const close = document.createElement('button');
   close.type = 'button'; close.className = 'btn'; close.textContent = t('btn.close');
-  close.onclick = closeModal;
-  actions.append(close);
-  UI_COMPONENTS.mountUiModalActions(body, actions);
+  close.onclick = closeCatalogDependencyDetails;
+  header.append(heading, close); panel.appendChild(header);
+  const line = (text, className = 'catalog-dependency-copy') => {
+    const element = document.createElement('p');
+    element.className = className; element.textContent = text; panel.appendChild(element);
+    return element;
+  };
+  const locate = (symbol) => {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'btn';
+    button.textContent = t('dependency.locate', { symbol: displayConfigSymbol(symbol, { kind: 'config' }) });
+    button.onclick = () => focusMenuconfigSymbol(symbol).catch(error => showToast(displayText(error.message)));
+    return button;
+  };
+  if (analysis.revision !== catalogStateRevision) {
+    line(t('dependency.stale'));
+    const refresh = document.createElement('button');
+    refresh.type = 'button'; refresh.className = 'btn';
+    refresh.textContent = t('dependency.refresh');
+    refresh.onclick = () => openCatalogDependencyDetails(option);
+    panel.appendChild(refresh);
+  } else {
+    const plan = analysis.plan;
+    if (analysis.preview) line(t('dependency.noExtra'), 'catalog-dependency-action');
+    else if (plan) {
+      line(t('dependency.extra', { list: plan.steps.map(step =>
+        `${displayConfigSymbol(step.symbol, { kind: 'config' })}=${step.value.toUpperCase()}`).join(' → ') }),
+      'catalog-dependency-action');
+    } else {
+      line(t('dependency.restricted'), 'catalog-dependency-action');
+      // The exact expression remains copyable on demand, not a forced modal.
+      const requirement = kconfigRequirementText(analysis.constraints?.dependencyExpressions || []);
+      if (requirement) {
+        const details = document.createElement('details');
+        const summary = document.createElement('summary');
+        summary.textContent = t('dependency.requirement');
+        const code = document.createElement('code'); code.textContent = requirement;
+        details.append(summary, code); panel.appendChild(details);
+      }
+      if (analysis.error && !requirement) line(displayText(analysis.error.message));
+    }
+    const automatic = (analysis.preview?.changes || plan?.automaticChanges || [])
+      .filter(change => change.symbol !== option.symbol && change.to !== 'n');
+    if (automatic.length) line(t('dependency.automatic', { list: [...new Set(automatic.map(change =>
+      `${displayConfigSymbol(change.symbol, { kind: 'config' })}=${String(change.to).toUpperCase()}`))].join(', ') }));
+    for (const row of analysis.installation || []) line(t(row.reason === 'provider-absent'
+      ? 'dependency.missing' : 'dependency.installation', { dependency: displayCompatibilityDetail(row) }));
+    const actions = document.createElement('div');
+    actions.className = 'catalog-dependency-actions';
+    actions.appendChild(locate(plan?.steps[0]?.symbol || option.symbol));
+    if (plan && !analysis.installation?.length) {
+      const apply = document.createElement('button');
+      apply.type = 'button'; apply.className = 'btn btn-primary';
+      apply.textContent = t('dependency.apply');
+      apply.onclick = () => {
+        if (analysis.revision !== catalogStateRevision || analysis.catalogKey !== menuCatalogKey) {
+          renderCatalogDependencyDetails(); return;
+        }
+        try {
+          const assignments = new Map(plan.steps.map(step => [step.symbol, step.value]));
+          applyCatalogIntent(option, 'y', false, 'user', assignments);
+          closeCatalogDependencyDetails(); renderCatalogUiAfterIntent();
+        } catch (error) { line(displayText(error.message)); }
+      };
+      actions.appendChild(apply);
+    }
+    panel.appendChild(actions);
+  }
+  host.appendChild(panel); refreshCatalogDependencyButtons();
 }
 
 function configurationPreflightValues() {
@@ -698,30 +609,6 @@ async function loadCompatibilityEvaluation(forceRefresh = false) {
   }
   const loaded = await CATALOG_LOADER.fetchCompatibility({ forceRefresh });
   return evaluateLoadedCompatibility(loaded);
-}
-
-let compatibilitySelectionHintTimer = null;
-let compatibilitySelectionHintKey = '';
-function scheduleCompatibilitySelectionHint() {
-  clearTimeout(compatibilitySelectionHintTimer);
-  const key = menuCatalogKey;
-  const revision = catalogStateRevision;
-  // Direct user edits only: imports stay nonmodal, and repeated renders do not
-  // rescan the graph or derive speculative repair plans.
-  compatibilitySelectionHintTimer = setTimeout(async () => {
-    if (!key || menuCatalogKey !== key || catalogStateRevision !== revision || !CATALOG_MODEL) return;
-    try {
-      const loaded = await CATALOG_LOADER.fetchCompatibility();
-      if (menuCatalogKey !== key || catalogStateRevision !== revision) return;
-      const evaluation = evaluateLoadedCompatibility(loaded, menuValues);
-      const rules = evaluation.warnings.map(warning => warning.rule.id).sort().join(', ');
-      const next = rules ? `${key}:${rules}` : '';
-      if (next && next !== compatibilitySelectionHintKey) showToast(t('st.compatibility.warn', { rules }));
-      compatibilitySelectionHintKey = next;
-    } catch (error) {
-      console.warn('[Catalog selection compatibility]', error);
-    }
-  }, 150);
 }
 
 async function runCatalogTaskQueue(names, tasks, concurrency, catalogKey = '', phase = 'idle') {

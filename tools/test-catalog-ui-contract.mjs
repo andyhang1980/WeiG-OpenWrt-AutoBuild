@@ -472,7 +472,7 @@ expect(pluginRenderContract.includes('const applyChecked = (checked) => {') &&
   !pluginRenderContract.includes('applyChecked(true);') &&
   !pluginRenderContract.includes('nameBtn.title = detail'),
   pluginRenderContract.includes("item.addEventListener('click'") &&
-  pluginRenderContract.includes('if (event.target === cb) return;') &&
+  pluginRenderContract.includes("event.target.closest('.plugin-dependency-toggle')") &&
   pluginRenderContract.includes('applyChecked(!cb.checked)'),
   'plugin card selection or shared right-click tooltip binding regressed');
 const originSlotContract = app.match(/function renderCatalogOriginSlot\(option, origin\) \{[\s\S]*?\n\}/)?.[0] || '';
@@ -658,16 +658,27 @@ expect(!app.includes('function resolvePackageSelectionOption(') &&
   'package selection must not reverse-map a dependency to a luci-app package');
 const setMenuValueContract = app.match(/function setMenuValue\(option, value, openChildren = false\) \{[\s\S]*?\n\}/)?.[0] || '';
 expect(setMenuValueContract.includes('applyMenuValue(option, value, false)') &&
-  setMenuValueContract.includes('openCatalogConflictModal(option, value, violations, false)') &&
+  setMenuValueContract.includes('openCatalogDependencyDetails(option, { error })') &&
   !setMenuValueContract.includes('resolvePackageSelectionOption') &&
   setMenuValueContract.includes('const renderedValue = menuValues.get(option.symbol)') &&
   setMenuValueContract.includes("renderCatalogUiAfterIntent(openChildren && renderedValue !== 'n', option, renderedValue)"),
   'Advanced menuconfig must apply the clicked Kconfig symbol directly and keep dependency direction native');
+expect(app.includes("validationOptions: { ...context.validationOptions, scope: 'menuconfig' }") &&
+  app.includes('skipPrerequisitePlanning: true') &&
+  !app.includes('scheduleCompatibilitySelectionHint') && !app.includes('openKconfigPrerequisiteModal') &&
+  !app.includes('openCatalogConflictModal') &&
+  !setMenuValueContract.includes('loadCompatibilityEvaluation') &&
+  app.includes('function catalogDependencyAnalysis(option)') &&
+  pluginRenderContract.includes("details.onclick = (event) => { event.stopPropagation(); openCatalogDependencyDetails") &&
+  app.includes("renderGroups({ incremental: true })") &&
+  css.includes('.catalog-dependency-details{') && css.includes('max-height:60dvh') &&
+  css.includes('overflow-x:hidden'),
+  'native card selection must stay separate from explicit, bounded inline dependency recommendations and compatibility checks');
 const renderMenuOptionContract = app.match(/function renderMenuOption\(option\) \{[\s\S]*?\n\}\nfunction renderMenuLeaf/)?.[0] || '';
 const hiddenDerivedContract = app.match(/function hiddenDerivedOptionActive\(option\) \{[\s\S]*?\n\}/)?.[0] || '';
 const importedDefaultContract = app.match(/function reconcileImportedConditionalDefaults\(options = \{\}\) \{[\s\S]*?\n\}/)?.[0] || '';
 expect(app.includes('function optionStateConstraints(option)') &&
-  (app.match(/CATALOG_ENGINE\.kconfigStateConstraints/g) || []).length >= 3 &&
+  (app.match(/CATALOG_ENGINE\.kconfigStateConstraints/g) || []).length >= 2 &&
   renderMenuOptionContract.includes("for (const stateValue of ['n', 'm', 'y'])") &&
   renderMenuOptionContract.includes('actions.appendChild(renderCatalogOriginSlot(option, origin))') &&
   renderMenuOptionContract.indexOf('actions.appendChild(renderCatalogOriginSlot(option, origin))') <
@@ -871,7 +882,9 @@ expect(restoreContract.includes('catalogStateRevision = snapshot.revision') &&
 expect(app.includes('function restoreMap(target, source)') &&
   app.includes('function restoreSet(target, source)'),
   'atomic rollback collection restorers are missing');
-expect((app.match(/restoreCatalogUiState\(snapshot\);/g) || []).length === 6,
+// The retired ordinary conflict modal no longer owns a transaction. Inline
+// assistance delegates to applyCatalogIntent's tested atomic rollback.
+expect((app.match(/restoreCatalogUiState\(snapshot\);/g) || []).length === 5,
   'not every atomic rollback path shares the clean restore contract');
 expect((app.match(/reconcileCatalogReadyState\(\)/g) || []).length >= 3,
   'menu/applications arrival paths do not share ready reconciliation');

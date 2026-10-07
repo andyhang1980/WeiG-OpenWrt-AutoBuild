@@ -247,6 +247,17 @@ button.catalog-applications-state{cursor:pointer}
   word-break: break-word;
 }
 .plugin-name:hover { color: var(--accent-text); }
+/* Dependency assistance is optional; the rest of the card remains one click. */
+.plugin:has(.plugin-dependency-toggle){display:grid;grid-template-columns:16px minmax(0,1fr);column-gap:8px;row-gap:2px}
+.plugin-dependency-toggle{grid-column:2;justify-self:start;border:0;background:none;color:var(--text2);font-size:var(--font-badge);padding:2px 0;cursor:pointer}
+.plugin-dependency-toggle:hover,.plugin-dependency-toggle[aria-expanded=true]{color:var(--accent-text)}
+.plugin-dependency-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.catalog-dependency-details{margin:0 10px 10px;min-width:0;max-width:calc(100% - 20px);max-height:60vh;max-height:60dvh;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;text-align:left}
+.catalog-dependency-details p{margin:4px 0;white-space:normal;overflow-wrap:anywhere}
+.catalog-dependency-details code{display:block;margin:8px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.catalog-dependency-action{font-weight:700}
+.catalog-dependency-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.catalog-dependency-actions .btn{white-space:normal;overflow-wrap:anywhere;max-width:100%}
 .plugin .hot { color: var(--gold); background: var(--gold-bg); font-size: var(--font-badge); margin-left: 5px; border-radius: 4px; padding: 0 4px; }
 .plugin .flag { font-size: var(--font-badge); margin-left: 5px; border-radius: 4px; padding: 0 4px; }
 .flag-force { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
