@@ -81,6 +81,7 @@ const regressionTests = [
   'test-ui-viewport-geometry.mjs',
   'test-build-identity.mjs',
   'test-build-admission.mjs',
+  'test-cancel-build.mjs',
   'test-preview-server.mjs',
   'test-build-request-identity.mjs',
   'test-request-audit.mjs',
@@ -90,8 +91,10 @@ const regressionTests = [
   'test-catalog-loader.mjs',
   'test-catalog-feeds.mjs',
   'test-catalog-engine.mjs',
+  'test-intent-transaction.mjs',
   'test-menuconfig-direct-intent.mjs',
   'test-compatibility-recommendation.mjs',
+  'test-native-installation-dependencies.mjs',
   'test-catalog-ui-contract.mjs',
   'test-package-probe-v3.mjs',
   'test-display-privacy-size.mjs',
@@ -243,9 +246,9 @@ if (!concreteInApp.length && !/["'`]PACKAGE_[A-Za-z0-9_.+@-]+["'`]/.test(engine)
 const catalogOnly =
   loader.includes('fetchApplications') && loader.includes('applications.json.gz') &&
   loader.includes('data.probeUi?.schema') && loader.includes("typeof row['zh-CN'] !== 'string'") &&
-  loader.includes('compatibilityV6') && loader.includes('![2, 3, 4, 5, 6].includes(Number(data.schema))') &&
-  loader.includes('schema,') && engine.includes('compatibility document requires schema 2, 3, 4, 5, or 6') &&
-  engine.includes('COMPATIBILITY_RULE_KEYS_V6') && engine.includes('triggerPackages') &&
+  loader.includes('compatibilityV7') && loader.includes('![2, 3, 4, 5, 6, 7].includes(Number(data.schema))') &&
+  loader.includes('schema,') && engine.includes('compatibility document requires schema 2, 3, 4, 5, 6, or 7') &&
+  engine.includes('COMPATIBILITY_RULE_KEYS_V7') && engine.includes('triggerPackages') &&
   engine.includes('compatibilityPatternMatches') &&
   app.includes('ensureCatalogApplications') && app.includes('CATALOG_ENGINE.evaluateCompatibilityRules') &&
   app.includes('CATALOG_ENGINE.deriveCompatibilityPlans') && app.includes('CATALOG_ENGINE.applyUserIntent') &&
@@ -257,7 +260,7 @@ const catalogOnly =
   profileBaseline.includes('allowedSymbols instanceof Set') &&
   !parser.includes(['submitted', 'config'].join('.')) &&
   !parser.includes('devices.json') && !parser.includes('config-manifest.json');
-if (catalogOnly) pass('Source/Branch/build tools, Kconfig, applications and schema-2/3/4/5/6 compatibility are Catalog-driven');
+if (catalogOnly) pass('Source/Branch/build tools, Kconfig, applications and schema-2/3/4/5/6/7 compatibility are Catalog-driven');
 else fail('Catalog-only execution contract');
 
 const minimalSchema6Target =

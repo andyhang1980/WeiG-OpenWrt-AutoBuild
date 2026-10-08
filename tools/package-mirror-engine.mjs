@@ -104,7 +104,7 @@ export function detectSourceFamily(root, rules, sourceId) {
   if (declared && detected.has(declared)) return { family: declared, declared, detected: [...detected] };
   if (declared) return { family: declared, declared, detected: [...detected] };
   if (detected.size) return { family: [...detected][0], declared, detected: [...detected] };
-  throw new Error(`no package mirror family for source: ${sourceId}`);
+  return { family: '', declared, detected: [] };
 }
 
 export function detectPackageManagers(root, rules) {
@@ -279,6 +279,7 @@ export async function applyPackageMirror(options) {
   const branch = String(options.branch || '');
   const requestedInput = String(options.requested || 'source-default');
   const requested = normalizePackageMirrorId(rules, requestedInput);
+  if (!presetMap(rules).has(requested)) throw new Error(`unknown package mirror preset: ${requestedInput}`);
   const familyInfo = detectSourceFamily(root, rules, source);
   const managerInfo = detectPackageManagers(root, rules);
   const configuredRepo = configuredVersionRepository(root);

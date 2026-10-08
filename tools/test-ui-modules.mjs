@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createUiSessionState } from '../site/wrt/lib/ui-session-state.js';
+import { createUiKconfigStateControl, updateUiKconfigStateControl, createUiConfigurationReview }
+  from '../site/wrt/lib/ui-components.js';
 import { readFrontendRuntimeSource } from './lib/frontend-source.mjs';
 
 const session = createUiSessionState();
@@ -21,6 +23,14 @@ const app = readFrontendRuntimeSource(appRoot);
 const orchestrator = readFileSync(new URL('../site/wrt/app.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../site/wrt/index.html', import.meta.url), 'utf8');
 const components = readFileSync(new URL('../site/wrt/lib/ui-components.js', import.meta.url), 'utf8');
+const reviewSource = app.match(/function configurationReviewChanges\(before, after, manualSymbols = new Set\(\)\) \{[\s\S]*?\n\}/)?.[0];
+assert(reviewSource);
+const reviewChanges = Function('CATALOG_MODEL', reviewSource + '; return configurationReviewChanges;')({
+  bySymbol: new Map([['SIZE', { type: 'int' }], ['APP', { type: 'bool' }]]) });
+assert.deepEqual(reviewChanges(new Map([['SIZE', '512'], ['APP', 'y']]), new Map(), new Set(['APP'])), [
+  { symbol: 'SIZE', from: '512', to: null, automatic: true },
+  { symbol: 'APP', from: 'y', to: 'n', automatic: false },
+]);
 const shell = readFileSync(new URL('../site/wrt/lib/page-shell-ui.js', import.meta.url), 'utf8');
 assert.match(html, /lib\/ui-session-state\.js/);
 assert.match(html, /lib\/ui-components\.js/);
@@ -63,4 +73,42 @@ for (const value of [160, 512, 1024, null]) {
     assert.equal(nodes[0].textContent, `submit.rootfs:${value}`);
   }
 }
-console.log('shared UI module contracts passed');
+// The same presentation primitive is used by Advanced, preflight and warnings.
+// Constraints are inputs, never reinterpreted by another dependency evaluator.
+class ControlNode {
+  constructor(tag) {
+    this.tag = tag; this.children = []; this.dataset = {}; this.attributes = {}; this.classes = new Set();
+    this.classList = { add: (name) => this.classes.add(name), contains: (name) => this.classes.has(name),
+      toggle: (name, enabled) => enabled ? this.classes.add(name) : this.classes.delete(name) };
+  }
+  set className(value) { this.classes = new Set(value.split(/\s+/)); }
+  set textContent(value) { this.text = value; this.children = []; }
+  setAttribute(key, value) { this.attributes[key] = value; }
+  getAttribute(key) { return this.attributes[key]; }
+  appendChild(child) { this.children.push(child); }
+  append(...children) { this.children.push(...children); }
+  querySelectorAll() { return this.children.filter(child => child.tag === 'button' && child.dataset.value); }
+}
+globalThis.document = { createElement: tag => new ControlNode(tag) };
+try {
+  const limits = { states: [{ value: 'n', selectable: false }, { value: 'm', selectable: false },
+    { value: 'y', selectable: false, locked: true }] };
+  const changes = [], blocked = [];
+  const control = createUiKconfigStateControl({ type: 'tristate', value: 'y', constraints: limits,
+    bindTooltip: (button, value) => { button.dataset.uiTooltipBody = value; },
+    onChange: value => changes.push(value), onUnavailable: button => blocked.push(button.dataset.value) });
+  const [n, , y] = control.querySelectorAll();
+  assert.equal(y.getAttribute('aria-pressed'), 'true'); assert(y.classList.contains('is-current'));
+  assert(y.classList.contains('is-locked')); assert.equal(y.children.length, 1);
+  n.onclick({ preventDefault() {} }); assert.deepEqual(changes, []); assert.deepEqual(blocked, ['n']);
+  updateUiKconfigStateControl(control, { value: 'n', constraints: { states: ['n','m','y'].map(value => ({ value, selectable: true })) } });
+  assert(n.classList.contains('is-editable')); assert.equal(n.getAttribute('aria-pressed'), 'true');
+  assert(!y.classList.contains('is-locked')); assert.equal(y.children.length, 0);
+  y.onclick({ preventDefault() {} }); assert.deepEqual(changes, ['y']);
+  const bool = createUiKconfigStateControl({ type: 'bool', value: 'n', constraints: limits });
+  assert.equal(bool.querySelectorAll().length, 2); assert.equal(bool.children[1].attributes['aria-hidden'], 'true');
+  const review = createUiConfigurationReview({ title: 'Before → after', changes: [{ symbol: 'APP', from: 'y', to: 'n' }],
+    formatSymbol: value => value, formatValue: value => value.toUpperCase(), formatKind: () => 'Explicit' });
+  assert.equal(review.children[1].children[1].text, 'Y → N');
+} finally { delete globalThis.document; }
+console.log('shared UI module contracts and N/M/Y presentation behavior passed');

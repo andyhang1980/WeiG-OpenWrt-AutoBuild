@@ -10,18 +10,16 @@ function setMenuValue(option, value, openChildren = false) {
   try {
     applyMenuValue(option, value, false);
   } catch (error) {
-    const violations = Array.isArray(error?.violations) ? error.violations : [];
-    if (error?.prerequisitePlans?.recommended &&
-        openKconfigPrerequisiteModal(option, value, error)) return false;
-    if (violations.some((item) => item.code === 'package-conflict' || item.code === 'choice-conflict') &&
-        openCatalogConflictModal(option, value, violations, false)) return false;
+    if (error?.name === 'CatalogIntentError') {
+      openCatalogDependencyDetails(option, { error });
+      return false;
+    }
     const first = displayText(String(error?.message || error).split(';')[0]);
     showToast(first.length > 240 ? `${first.slice(0, 237)}…` : first);
     return false;
   }
   const renderedValue = menuValues.get(option.symbol) ?? simpleKconfigDefault(option);
   renderCatalogUiAfterIntent(openChildren && renderedValue !== 'n', option, renderedValue);
-  scheduleCompatibilitySelectionHint();
   return true;
 }
 function initDefconfig() {
@@ -137,7 +135,7 @@ function initMenuconfigControls() {
   $('catalogLoadState').onclick = retryCatalogLoad;
   $('catalogCopyDiagnostics').onclick = copyCatalogDiagnostics;
   $('menuconfigScroll').onscroll = () => {
-    hideMenuTooltip();
+    dismissUiTooltipsWithin($('menuconfigBody'));
     const scroller = $('menuconfigScroll');
     if (scroller.dataset.hasMore !== 'true' ||
         scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight > 120) return;
@@ -281,49 +279,12 @@ function renderMenuOption(option) {
   actions.className = 'menuconfig-option-actions';
   actions.appendChild(renderCatalogOriginSlot(option, origin));
   if (option.type === 'bool' || option.type === 'tristate') {
-    const tri = document.createElement('span');
-    tri.className = 'kconfig-tri';
-    for (const stateValue of ['n', 'm', 'y']) {
-      if (option.type === 'bool' && stateValue === 'm') {
-        const spacer = document.createElement('span');
-        spacer.className = 'kconfig-state-spacer';
-        spacer.setAttribute('aria-hidden', 'true');
-        tri.appendChild(spacer);
-        continue;
-      }
-      const stateConstraint = constraints.states.find((item) => item.value === stateValue) || {
-        value: stateValue, selectable: false, current: value === stateValue, locked: false,
-      };
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = stateValue.toUpperCase();
-      button.className = 'kconfig-state';
-      button.classList.toggle('is-current', value === stateValue);
-      button.classList.toggle('is-editable', stateConstraint.selectable);
-      button.classList.toggle('is-disabled', !stateConstraint.selectable);
-      button.classList.toggle('is-locked', Boolean(stateConstraint.locked));
-      button.dataset.value = stateValue;
-      button.setAttribute('aria-pressed', String(value === stateValue));
-      button.setAttribute('aria-disabled', String(!stateConstraint.selectable));
-      bindKconfigConstraintTooltip(button, option, stateValue, constraints);
-      if (stateConstraint.locked) {
-        const lock = document.createElement('span');
-        lock.className = 'kconfig-state-lock';
-        lock.textContent = '🔒';
-        lock.setAttribute('aria-hidden', 'true');
-        button.appendChild(lock);
-      }
-      button.onclick = (event) => {
-        if (!stateConstraint.selectable) {
-          event.preventDefault();
-          showDatasetTooltip(button, event);
-          return;
-        }
-        if (value === stateValue) return;
-        setMenuValue(option, stateValue, childCount > 0 && stateValue !== 'n');
-      };
-      tri.appendChild(button);
-    }
+    const tri = UI_COMPONENTS.createUiKconfigStateControl({ type: option.type, value, constraints,
+      className: 'kconfig-tri',
+      bindTooltip: (button, stateValue, limits) => bindKconfigConstraintTooltip(button, option, stateValue, limits),
+      onUnavailable: showDatasetTooltip,
+      onChange: (stateValue) => setMenuValue(option, stateValue, childCount > 0 && stateValue !== 'n'),
+    });
     actions.appendChild(tri);
   } else {
     const input = document.createElement('input');
@@ -513,7 +474,7 @@ function updateMenuconfigOverviewVisibility() {
   row.hidden = $('menuconfigSelectedToggle').hidden && $('importSummary').hidden;
 }
 function renderMenuconfig() {
-  hideMenuTooltip();
+  dismissUiTooltipsWithin($('menuconfigBody'));
   const box = $('menuconfigBox');
   if (!box || !MENU_CATALOG?.menu?.options) return;
   box.hidden = false;

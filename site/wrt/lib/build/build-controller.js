@@ -22,6 +22,11 @@ function issueSubmitUrl(repo, title, body = '') {
   if (body) params.set('body', body);
   return 'https://github.com/' + repo + '/issues/new?' + params;
 }
+function selectedFirmwareOption(id) {
+  const option = $(id)?.selectedOptions?.[0];
+  if (!option || !option.value || option.disabled) throw new Error(`Firmware setting is not ready: ${id}`);
+  return { value: option.value, label: option.textContent };
+}
 function submitReadiness() {
   const isCatalog = state.device?.id === 'catalog-target';
   const checks = [
@@ -30,6 +35,9 @@ function submitReadiness() {
     ['menuconfig', !isCatalog || Boolean(MENU_CATALOG && menuOptionBySymbol.size)],
     ['profile-baseline', !isCatalog || Boolean(ACTIVE_PROFILE_BASELINE && PROFILE_BASELINE_STORE)],
     ['theme', Boolean($('fwThemeBox')?.options?.length && $('fwThemeBox')?.value)],
+    ['ntp', Boolean($('ntpBox')?.selectedOptions?.[0]?.value)],
+    ['package-mirror', Boolean($('packageMirrorBox')?.selectedOptions?.[0]?.value &&
+      packageMirrorAvailable($('packageMirrorBox').value))],
     ['defconfig', typeof state.useDefconfig === 'boolean'],
     ['identity', Boolean(state.buildMeta && state.buildMeta.version === state.siteVersion &&
       state.buildMeta.siteSha256 === SITE_RELEASE_SHA &&
@@ -102,153 +110,161 @@ function schema6TargetIdentity(target = state.device?.target) {
 }
 
 function openSubmitModal() {
-  const readiness = submitReadiness();
-  if (!readiness.ok) {
-    updateSubmitGate();
-    showToast(t('build.notReady', { list: formatList(readiness.missing) }));
-    return;
-  }
-  const repo = targetRepo();
-  if (!repo) { alert(t('owner.required')); $('ownerBox').focus(); return; }
-  const previewSelection = effectiveSelection();
-  const tag = BUILD_IDENTITY_MODULE.normalizeBuildTag($('tagBox').value, t('tag.anonymous'));
-  $('tagBox').value = tag;
-  const previewPlugins = previewSelection.normal.map((p) => p.id)
-    .concat(previewSelection.forced.map((p) => '+' + p.id))
-    .concat(previewSelection.removed.map((p) => '-' + p.id));
-  const firmware = {
-    timezone: state.timezone,
-    theme: $('fwThemeBox').value,
-    ntp: $('ntpBox').value,
-    packageMirror: $('packageMirrorBox').value,
-  };
-  Object.assign(state, firmware);
-  const requestStamp = localStamp();
-  const sourceEnv = BUILD_IDENTITY_MODULE.normalizeBuildEnvironment(state.buildMeta?.branch);
-  const titlePrefix = '[build] ' + BUILD_IDENTITY_MODULE.buildIssueRequestPrefix(sourceEnv) + requestStamp + '/';
-  const titleSuffix = '/' + requestTargetProfilePart() + '/' + state.source.id + '/' + state.version.id + '/' + selectedTargetProfileName();
-  const titleTag = BUILD_IDENTITY_MODULE.fitBuildIssueTag(tag, titlePrefix, titleSuffix, 'anonymous');
-  if (!titleTag) {
-    showToast(t('runtime.611eaffc726e'));
-    return;
-  }
-  const title = titlePrefix + titleTag + titleSuffix;
+  try {
+    const readiness = submitReadiness();
+    if (!readiness.ok) {
+      updateSubmitGate();
+      showToast(t('build.notReady', { list: formatList(readiness.missing) }));
+      return;
+    }
+    const repo = targetRepo();
+    if (!repo) { alert(t('owner.required')); $('ownerBox').focus(); return; }
+    const previewSelection = effectiveSelection();
+    const themeOption = selectedFirmwareOption('fwThemeBox');
+    const ntpOption = selectedFirmwareOption('ntpBox');
+    const mirrorOption = selectedFirmwareOption('packageMirrorBox');
+    const tag = BUILD_IDENTITY_MODULE.normalizeBuildTag($('tagBox').value, t('tag.anonymous'));
+    $('tagBox').value = tag;
+    const previewPlugins = previewSelection.normal.map((p) => p.id)
+      .concat(previewSelection.forced.map((p) => '+' + p.id))
+      .concat(previewSelection.removed.map((p) => '-' + p.id));
+    const firmware = {
+      timezone: state.timezone,
+      theme: themeOption.value,
+      ntp: ntpOption.value,
+      packageMirror: mirrorOption.value,
+    };
+    Object.assign(state, firmware);
+    const requestStamp = localStamp();
+    const sourceEnv = BUILD_IDENTITY_MODULE.normalizeBuildEnvironment(state.buildMeta?.branch);
+    const titlePrefix = '[build] ' + BUILD_IDENTITY_MODULE.buildIssueRequestPrefix(sourceEnv) + requestStamp + '/';
+    const titleSuffix = '/' + requestTargetProfilePart() + '/' + state.source.id + '/' + state.version.id + '/' + selectedTargetProfileName();
+    const titleTag = BUILD_IDENTITY_MODULE.fitBuildIssueTag(tag, titlePrefix, titleSuffix, 'anonymous');
+    if (!titleTag) {
+      showToast(t('runtime.611eaffc726e'));
+      return;
+    }
+    const title = titlePrefix + titleTag + titleSuffix;
 
-  openModal(t('btn.submit'));
-  $('modal').querySelector('.modal').classList.add('modal-wide', 'submit-confirmation');
-  const mb = $('modalBody');
-  mb.textContent = '';
-  const sum = document.createElement('div');
-  sum.className = 'summary-box summary-grid';
-  const summary = t('submit.confirm', {
-    brand: state.device.brand, device: state.device.name, source: state.source.label,
-    version: state.version.label, variant: state.variant.name, n: previewPlugins.length, tag,
-    timezone: $('timezoneBox').value,
-    theme: $('fwThemeBox').selectedOptions[0].textContent,
-    ntp: $('ntpBox').selectedOptions[0].textContent,
-    packageMirror: $('packageMirrorBox').selectedOptions[0].textContent,
-    pageVersion: state.siteVersion,
-  });
-  for (const [index, text] of summary.split('\n').entries()) {
-    const field = document.createElement(index === 0 ? 'strong' : 'div');
-    field.textContent = text;
-    sum.appendChild(field);
-  }
-  const rootfs = rootfsPartitionInfo();
-  if (rootfs) {
-    const field = document.createElement('div');
-    field.dataset.rootfsSize = String(rootfs.value);
-    field.textContent = t('submit.rootfs', { size: rootfs.value });
-    sum.appendChild(field);
-  }
-  mb.appendChild(sum);
-  if (state.importedConfig && !importedTargetVerified) {
-    const warning = document.createElement('p');
-    warning.className = 'import-error';
-    warning.textContent = t('build.customTargetWarning');
-    mb.appendChild(warning);
-  }
+    // Construct before exposing the dialog; failures must never leave an empty shell.
+    const mb = document.createDocumentFragment();
+    const sum = document.createElement('div');
+    sum.className = 'summary-box summary-grid';
+    const summary = t('submit.confirm', {
+      brand: state.device.brand, device: state.device.name, source: state.source.label,
+      version: state.version.label, variant: state.variant.name, n: previewPlugins.length, tag,
+      timezone: $('timezoneBox').value,
+      theme: themeOption.label,
+      ntp: ntpOption.label,
+      packageMirror: mirrorOption.label,
+      pageVersion: state.siteVersion,
+    });
+    for (const [index, text] of summary.split('\n').entries()) {
+      const field = document.createElement(index === 0 ? 'strong' : 'div');
+      field.textContent = text;
+      sum.appendChild(field);
+    }
+    const rootfs = rootfsPartitionInfo();
+    if (rootfs) {
+      const field = document.createElement('div');
+      field.dataset.rootfsSize = String(rootfs.value);
+      field.textContent = t('submit.rootfs', { size: rootfs.value });
+      sum.appendChild(field);
+    }
+    mb.appendChild(sum);
+    if (state.importedConfig && !importedTargetVerified) {
+      const warning = document.createElement('p');
+      warning.className = 'import-error';
+      warning.textContent = t('build.customTargetWarning');
+      mb.appendChild(warning);
+    }
 
-  const methods = document.createElement('div');
-  methods.className = 'method-grid';
-  mb.appendChild(methods);
-  const card = (titleKey, descText, btnKey, onClick) => {
-    const primary = !methods.children.length;
-    const c = document.createElement('div');
-    c.className = 'method-card' + (primary ? ' method-primary' : '');
-    const h = document.createElement('h4');
-    h.textContent = t(titleKey);
-    c.appendChild(h);
-    const p = document.createElement('p');
-    p.textContent = descText;
-    c.appendChild(p);
-    const button = document.createElement('button');
-    button.className = primary ? 'btn btn-primary' : 'btn';
-    button.type = 'button';
-    button.textContent = t(btnKey);
-    button.addEventListener('click', onClick);
-    c.appendChild(button);
-    methods.appendChild(c);
-  };
-  card('submit.m1.title', state.mode === 'self' ? t('submit.m1.descSelf') : t('submit.m1.desc'),
-    'submit.m1.btn', async (event) => {
-      const button = event.currentTarget;
-      button.disabled = true;
-      try {
-        await ensurePackageMirrors();
-        const preflight = await ensureBuildPreflight();
-        const finalSelection = effectiveSelection();
-        const plugins = finalSelection.normal.map((p) => p.id)
-          .concat(finalSelection.forced.map((p) => '+' + p.id))
-          .concat(finalSelection.removed.map((p) => '-' + p.id));
-        const config = preflight.config;
-        const overrides = buildRequestOverrides(config);
-        const payload = {
-          schema: 6,
-          generatedAt: new Date().toISOString(),
-          requestId: requestStamp,
-          sourceEnv,
-          requestCommit: String(state.buildMeta?.commit || ''),
-          pageVersion: state.siteVersion,
-          configId: [state.device.id, state.source.id, state.version.id, state.variant.id].join('/'),
-          device: state.device.id, source: state.source.id, version: state.version.id,
-          branch: state.version.branch,
-          variant: state.variant.id, plugins, tag, lanip: state.lanip, overrides,
-          use_defconfig: state.useDefconfig === true,
-          audit: buildAudit(preflight),
-          firmware: configFirmwareSettings(config),
-          catalog: currentCatalogContract(),
-        };
-        if (['custom-target', 'catalog-target'].includes(state.device.id)) {
-          payload.customTarget = schema6TargetIdentity();
+    const methods = document.createElement('div');
+    methods.className = 'method-grid';
+    mb.appendChild(methods);
+    const card = (titleKey, descText, btnKey, onClick) => {
+      const primary = !methods.children.length;
+      const c = document.createElement('div');
+      c.className = 'method-card' + (primary ? ' method-primary' : '');
+      const h = document.createElement('h4');
+      h.textContent = t(titleKey);
+      c.appendChild(h);
+      const p = document.createElement('p');
+      p.textContent = descText;
+      c.appendChild(p);
+      const button = document.createElement('button');
+      button.className = primary ? 'btn btn-primary' : 'btn';
+      button.type = 'button';
+      button.textContent = t(btnKey);
+      button.addEventListener('click', onClick);
+      c.appendChild(button);
+      methods.appendChild(c);
+    };
+    card('submit.m1.title', state.mode === 'self' ? t('submit.m1.descSelf') : t('submit.m1.desc'),
+      'submit.m1.btn', async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          await ensurePackageMirrors();
+          const preflight = await ensureBuildPreflight();
+          const finalSelection = effectiveSelection();
+          const plugins = finalSelection.normal.map((p) => p.id)
+            .concat(finalSelection.forced.map((p) => '+' + p.id))
+            .concat(finalSelection.removed.map((p) => '-' + p.id));
+          const config = preflight.config;
+          const overrides = buildRequestOverrides(config);
+          const payload = {
+            schema: 6,
+            generatedAt: new Date().toISOString(),
+            requestId: requestStamp,
+            sourceEnv,
+            requestCommit: String(state.buildMeta?.commit || ''),
+            pageVersion: state.siteVersion,
+            configId: [state.device.id, state.source.id, state.version.id, state.variant.id].join('/'),
+            device: state.device.id, source: state.source.id, version: state.version.id,
+            branch: state.version.branch,
+            variant: state.variant.id, plugins, tag, lanip: state.lanip, overrides,
+            use_defconfig: state.useDefconfig === true,
+            audit: buildAudit(preflight),
+            firmware: configFirmwareSettings(config),
+            catalog: currentCatalogContract(),
+          };
+          if (['custom-target', 'catalog-target'].includes(state.device.id)) {
+            payload.customTarget = schema6TargetIdentity();
+          }
+          if (state.rootpw) payload.rootpw = state.rootpw;
+          const filename = [requestStamp, requestTargetProfilePart(true), safeDownloadNamePart(state.source.id, 'source'),
+            safeDownloadNamePart(state.version.id, 'branch'), safeDownloadNamePart(selectedTargetProfileName())].join('-') + '.json';
+          downloadBlob(JSON.stringify(payload, null, 2) + '\n', 'application/json;charset=utf-8', filename);
+          const issueUrl = issueSubmitUrl(repo, title, await mobileIssuePayload(payload));
+          const issueWindow = window.open(issueUrl, '_blank');
+          if (issueWindow) issueWindow.opener = null;
+          else window.location.assign(issueUrl);
+        } catch (err) {
+          showGenerationError(err);
+        } finally {
+          button.disabled = false;
         }
-        if (state.rootpw) payload.rootpw = state.rootpw;
-        const filename = [requestStamp, requestTargetProfilePart(true), safeDownloadNamePart(state.source.id, 'source'),
-          safeDownloadNamePart(state.version.id, 'branch'), safeDownloadNamePart(selectedTargetProfileName())].join('-') + '.json';
-        downloadBlob(JSON.stringify(payload, null, 2) + '\n', 'application/json;charset=utf-8', filename);
-        const issueUrl = issueSubmitUrl(repo, title, await mobileIssuePayload(payload));
-        const issueWindow = window.open(issueUrl, '_blank');
-        if (issueWindow) issueWindow.opener = null;
-        else window.location.assign(issueUrl);
-      } catch (err) {
-        showGenerationError(err);
-      } finally {
-        button.disabled = false;
-      }
+      });
+
+    card('submit.existing.title', t('submit.existing.desc'), 'btn.import', () => {
+      reopenSubmitAfterImport = true;
+      closeModal();
+      $('configImport').click();
     });
 
-  card('submit.existing.title', t('submit.existing.desc'), 'btn.import', () => {
-    reopenSubmitAfterImport = true;
-    closeModal();
-    $('configImport').click();
-  });
+    card('submit.download.title', t('submit.download.desc'), 'btn.download', (event) => {
+      downloadConfig(event.currentTarget);
+    });
 
-  card('submit.download.title', t('submit.download.desc'), 'btn.download', (event) => {
-    downloadConfig(event.currentTarget);
-  });
-
-  const p3 = document.createElement('p');
-  p3.textContent = t('submit.footer', { tag });
-  mb.appendChild(p3);
+    const p3 = document.createElement('p');
+    p3.textContent = t('submit.footer', { tag });
+    mb.appendChild(p3);
+    openModal(t('btn.submit'));
+    $('modal').querySelector('.modal').classList.add('modal-wide', 'submit-confirmation');
+    $('modalBody').replaceChildren(mb);
+  } catch (error) {
+    showGenerationError(error);
+  }
 }
 $('submitBtn').addEventListener('click', openSubmitModal);

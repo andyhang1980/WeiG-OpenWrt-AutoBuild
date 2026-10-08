@@ -6,6 +6,8 @@
  */
 'use strict';
 
+let catalogNativeIntentModel = null, catalogNativeIntentRevision = -1;
+
 function resetCatalogSelectionLayers() {
   menuValues.clear();
   menuTouched.clear();
@@ -456,9 +458,17 @@ function recordCatalogExplicitIntent(option, value) {
     menuTouched.add(option.symbol);
     return 'user';
   }
-  const override = CATALOG_ENGINE?.resolveCatalogUserOverride
+  let override = CATALOG_ENGINE?.resolveCatalogUserOverride
     ? CATALOG_ENGINE.resolveCatalogUserOverride(catalogInheritedValue(option.symbol), value)
     : (catalogInheritedValue(option.symbol) === value ? null : value);
+  // An inherited inactive N is not the active default. A direct exclusion
+  // against an applicable Y/M default must remain explicit across toggles.
+  if (override === null && value !== null && CATALOG_MODEL && CATALOG_ENGINE?.resolveKconfigDefault) {
+    const record = CATALOG_MODEL.bySymbol.get(option.symbol);
+    const context = catalogValidationContext(menuValues, 'interactive');
+    const resolved = record && CATALOG_ENGINE.resolveKconfigDefault(record, context.values, context.validationOptions);
+    if (resolved?.status === 'resolved' && String(resolved.value) !== String(value)) override = value;
+  }
   if (override === null) {
     catalogUserOverrides.delete(option.symbol);
     if (!catalogRecommendedValues.has(option.symbol) && !catalogImportedSymbols.has(option.symbol)) {
@@ -470,38 +480,45 @@ function recordCatalogExplicitIntent(option, value) {
   menuTouched.add(option.symbol);
   return 'user';
 }
-function applyCatalogIntent(option, value, force = false, source = 'user') {
+function evaluateCatalogIntent(option, value, force = false, assignments = null) {
+  const context = catalogValidationContext(menuValues, 'interactive');
+  const protectedSymbols = catalogProtectedSymbols();
+  for (const [symbol, next] of new Map(assignments || [[option.symbol, value]])) {
+    if (next === 'n') protectedSymbols.delete(symbol);
+  }
+  return CATALOG_ENGINE.applyUserIntent(CATALOG_MODEL, context.values, {
+    symbol: option.symbol, value, force,
+    incremental: catalogNativeIntentModel === CATALOG_MODEL && catalogNativeIntentRevision === catalogStateRevision,
+    ...(assignments ? { assignments } : {}),
+    dependencySymbols: catalogDependencySymbols, protectedSymbols,
+    preferredValues: catalogPreferredValues(), explicitSymbols: catalogUserOverrides.keys(),
+    derivedSymbols: catalogConditionalDefaultSymbols, skipPrerequisitePlanning: true,
+    validationOptions: { ...context.validationOptions, scope: 'menuconfig' },
+  });
+}
+function applyCatalogIntent(option, value, force = false, source = 'user', assignments = null) {
   if (!option) return { changes: [], violations: [] };
   const snapshot = snapshotCatalogUiState();
   const previous = menuValues.get(option.symbol) ?? 'n';
   try {
-    const context = catalogValidationContext(menuValues, 'interactive');
+    const direct = new Map(assignments || []);
+    direct.set(option.symbol, value);
     const result = (!CATALOG_MODEL || !CATALOG_ENGINE)
       ? { changes: [{ symbol: option.symbol, from: previous, to: value, reason: 'fallback' }], violations: [] }
-      : CATALOG_ENGINE.applyUserIntent(CATALOG_MODEL, context.values, {
-        symbol: option.symbol,
-        value,
-        force,
-        dependencySymbols: catalogDependencySymbols,
-        protectedSymbols: catalogProtectedSymbols(value === 'n' ? option.symbol : ''),
-        preferredValues: catalogPreferredValues(),
-        explicitSymbols: catalogUserOverrides.keys(),
-        validationOptions: context.validationOptions,
-      });
+      : evaluateCatalogIntent(option, value, force, assignments);
     let directIntentChanged = false;
     for (const change of result.changes) {
       if (change.remove) menuValues.delete(change.symbol);
       else menuValues.set(change.symbol, change.to);
-      const explicit = change.symbol === option.symbol;
-      const conditionalDefault = ['conditional-default', 'choice-default'].includes(change.reason);
+      const explicit = direct.has(change.symbol);
+      const conditionalDefault = !explicit && (['conditional-default', 'choice-default'].includes(change.reason) ||
+        result.derivedSymbols?.has(change.symbol));
       const changedOption = menuOptionBySymbol.get(change.symbol);
       if (conditionalDefault) {
         menuTouched.delete(change.symbol);
         catalogImportedSymbols.delete(change.symbol);
         catalogDependencySymbols.delete(change.symbol);
-        if (change.to === (catalogBaselineValues.get(change.symbol) ?? 'n')) {
-          catalogConditionalDefaultSymbols.delete(change.symbol);
-        } else catalogConditionalDefaultSymbols.add(change.symbol);
+        catalogConditionalDefaultSymbols.add(change.symbol);
       } else if (source === 'restore' && explicit) {
         if (!catalogRecommendedValues.has(change.symbol) && !catalogImportedSymbols.has(change.symbol)) {
           menuTouched.delete(change.symbol);
@@ -531,22 +548,27 @@ function applyCatalogIntent(option, value, force = false, source = 'user') {
     // applyUserIntent call is still meaningful even though it returns no
     // value changes; record only this user call as direct Intent. The select
     // change above remains dependency-owned and is never promoted here.
-    if (source === 'user' && !result.changes.some((change) => change.symbol === option.symbol)) {
-      const beforeOverride = catalogUserOverrides.has(option.symbol)
-        ? catalogUserOverrides.get(option.symbol) : undefined;
-      const beforeTouched = menuTouched.has(option.symbol);
-      const beforeDependency = catalogDependencySymbols.has(option.symbol);
-      const curatedSource = recordCatalogExplicitIntent(option, value);
-      catalogConditionalDefaultSymbols.delete(option.symbol);
-      catalogDependencySymbols.delete(option.symbol);
-      syncMenuToCurated(option, menuValues.get(option.symbol) ?? value, curatedSource);
-      syncFirmwareThemeFromMenu(option, menuValues.get(option.symbol) ?? value);
-      directIntentChanged = beforeOverride !== (catalogUserOverrides.has(option.symbol)
-        ? catalogUserOverrides.get(option.symbol) : undefined) ||
-        beforeTouched !== menuTouched.has(option.symbol) ||
-        beforeDependency !== catalogDependencySymbols.has(option.symbol);
+    for (const [directSymbol, directValue] of direct) {
+      const directOption = menuOptionBySymbol.get(directSymbol);
+      if (!directOption) continue;
+      if (source === 'user' && !result.changes.some((change) => change.symbol === directSymbol)) {
+        const beforeOverride = catalogUserOverrides.has(directSymbol)
+          ? catalogUserOverrides.get(directSymbol) : undefined;
+        const beforeTouched = menuTouched.has(directSymbol);
+        const beforeDependency = catalogDependencySymbols.has(directSymbol);
+        const curatedSource = recordCatalogExplicitIntent(directOption, directValue);
+        catalogConditionalDefaultSymbols.delete(directSymbol);
+        catalogDependencySymbols.delete(directSymbol);
+        syncMenuToCurated(directOption, menuValues.get(directSymbol) ?? directValue, curatedSource);
+        syncFirmwareThemeFromMenu(directOption, menuValues.get(directSymbol) ?? directValue);
+        directIntentChanged ||= beforeOverride !== (catalogUserOverrides.has(directSymbol)
+          ? catalogUserOverrides.get(directSymbol) : undefined) ||
+          beforeTouched !== menuTouched.has(directSymbol) ||
+          beforeDependency !== catalogDependencySymbols.has(directSymbol);
+      }
     }
     if (result.changes.length || directIntentChanged) markCatalogStateChanged();
+    catalogNativeIntentModel = CATALOG_MODEL; catalogNativeIntentRevision = catalogStateRevision;
     return result;
   } catch (error) {
     restoreCatalogUiState(snapshot);
@@ -557,7 +579,8 @@ function reconcileImportedConditionalDefaults(options = {}) {
   if (!CATALOG_MODEL || !CATALOG_ENGINE?.reconcileKconfigDerivedValues) return;
   const context = catalogValidationContext(menuValues, 'interactive');
   const result = CATALOG_ENGINE.reconcileKconfigDerivedValues(
-    CATALOG_MODEL, context.values, { ...context.validationOptions, ...options });
+    CATALOG_MODEL, context.values, { ...context.validationOptions,
+      derivedSymbols: catalogConditionalDefaultSymbols, explicitSymbols: catalogUserOverrides.keys(), ...options });
   const derivedSymbols = result.derivedSymbols || new Set();
   const derivedReasons = result.derivedReasons || new Map();
   for (const change of result.changes) {
@@ -580,7 +603,7 @@ function reconcileImportedConditionalDefaults(options = {}) {
     menuImportedNonDefault.delete(symbol);
     catalogDependencySymbols.delete(symbol);
     const baseline = catalogBaselineValues.get(symbol) ?? 'n';
-    if (value !== baseline && ['conditional-default', 'choice-default'].includes(derivedReasons.get(symbol))) {
+    if (['conditional-default', 'choice-default'].includes(derivedReasons.get(symbol))) {
       catalogConditionalDefaultSymbols.add(symbol);
     } else {
       catalogConditionalDefaultSymbols.delete(symbol);
@@ -642,60 +665,15 @@ function applyMenuValue(option, value, force = false, source = 'user') {
     ? applyScalarMenuValue(option, value, source)
     : applyCatalogIntent(option, value, force, source);
 }
-function catalogConflictRecordForPackage(name) {
-  return CATALOG_MODEL?.byPackage?.get(String(name || '')) || null;
-}
 // Shared package identity for application cards, probes and size accounting.
 // PACKAGE_* also names ordinary Kconfig suboptions; a prefix is not proof.
 function catalogPackageRecordForSymbol(symbol) {
   const record = CATALOG_MODEL?.bySymbol?.get(String(symbol || ''));
-  return record?.package && catalogConflictRecordForPackage(record.package) === record ? record : null;
-}
-function catalogConflictRows(option, requestedValue, violations) {
-  const symbols = new Set([option.symbol]);
-  for (const violation of violations || []) {
-    if (violation.code === 'package-conflict') {
-      const left = catalogConflictRecordForPackage(violation.package);
-      if (left?.configSymbol) symbols.add(left.configSymbol);
-      for (const packageName of [violation.otherPackage, ...(violation.otherPackages || [])]) {
-        const right = catalogConflictRecordForPackage(packageName);
-        if (right?.configSymbol) symbols.add(right.configSymbol);
-      }
-    } else if (violation.code === 'choice-conflict') {
-      for (const symbol of violation.symbols || []) symbols.add(symbol);
-    }
-  }
-  return [...symbols].slice(0, 18).map((symbol) => {
-    const record = CATALOG_MODEL?.bySymbol?.get(symbol);
-    const menuOption = menuOptionBySymbol.get(symbol);
-    if (!record || !menuOption) return null;
-    return {
-      symbol,
-      record,
-      option: menuOption,
-      label: record.package || symbol.replace(/^PACKAGE_/, ''),
-      requested: symbol === option.symbol ? requestedValue : null,
-    };
-  }).filter(Boolean);
-}
-function catalogConflictPlanInvalid(plan, violations) {
-  for (const violation of violations || []) {
-    if (violation.code === 'package-conflict') {
-      const left = catalogConflictRecordForPackage(violation.package)?.configSymbol;
-      const rightSymbols = [violation.otherPackage, ...(violation.otherPackages || [])]
-        .map((packageName) => catalogConflictRecordForPackage(packageName)?.configSymbol).filter(Boolean);
-      if (left && rightSymbols.some((right) =>
-        (plan.get(left) || 'n') !== 'n' && (plan.get(right) || 'n') !== 'n')) return true;
-    }
-    if (violation.code === 'choice-conflict') {
-      const enabled = (violation.symbols || []).filter((symbol) => (plan.get(symbol) || 'n') !== 'n');
-      if (enabled.length > 1) return true;
-    }
-  }
-  return false;
+  return record?.package && CATALOG_MODEL.byPackage.get(record.package) === record ? record : null;
 }
 function snapshotCatalogUiState() {
   return {
+    nativeIntentModel: catalogNativeIntentModel, nativeIntentRevision: catalogNativeIntentRevision,
     values: new Map(menuValues), touched: new Set(menuTouched), selected: new Set(state.sel),
     removed: new Set(state.removed), dependencies: new Set(catalogDependencySymbols),
     conditionalDefaults: new Set(catalogConditionalDefaultSymbols),
@@ -714,6 +692,8 @@ function restoreSet(target, source) {
   for (const value of source) target.add(value);
 }
 function restoreCatalogUiState(snapshot) {
+  catalogNativeIntentModel = snapshot.nativeIntentModel || null;
+  catalogNativeIntentRevision = snapshot.nativeIntentRevision ?? -1;
   restoreMap(menuValues, snapshot.values);
   restoreSet(menuTouched, snapshot.touched);
   restoreSet(state.sel, snapshot.selected);
@@ -732,8 +712,7 @@ function renderCatalogUiAfterIntent(openChildren = false, option = null, value =
   if (openChildren && value !== 'n' && option) openMenuChildren(option);
   renderMenuconfig();
   renderFirmwareSettings();
-  renderGroups();
+  renderGroups({ incremental: true });
   updateStats();
-  renderBuildContract();
   updateSubmitGate();
 }

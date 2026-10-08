@@ -54,7 +54,6 @@
   .menuconfig-choice-text>.menu-translation-chip{position:absolute;right:0;top:50%;transform:translateY(-50%)}
   .kconfig-tri button{min-width:31px;padding-inline:6px}
   html:not([lang=en]) .menu-translation-chip{display:inline-flex;flex:none;align-items:center;justify-content:center;min-width:25px;height:23px;padding:0 5px;border:1px solid color-mix(in srgb,var(--accent) 45%,var(--border));border-radius:6px;background:color-mix(in srgb,var(--accent) 8%,var(--card2));color:var(--accent);font-size:var(--font-badge);font-weight:700;line-height:1}
-  .ui-tooltip{max-width:calc(100vw - 24px);max-height:min(42vh,280px);max-height:min(42dvh,280px)}
   .profile-package-row{grid-template-columns:minmax(0,1fr) auto}
   .profile-package-row small{grid-column:1}
   .profile-package-actions{grid-column:2;grid-row:1 / span 2}

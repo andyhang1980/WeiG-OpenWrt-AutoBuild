@@ -229,6 +229,7 @@ function applySourceDefaults() {
     state.rootpwAuto = false;
   }
   renderFirmwareSettings();
+  updateLoginInfo();
 }
 
 function renderSources() {
@@ -316,12 +317,14 @@ function renderModes() {
     state.rootpwAuto = false;
     const v = $('rootpwBox').value.trim();
     if (v === '' || v === '@empty' || /^[A-Za-z0-9@#%^&*_+=.,:!?-]{4,32}$/.test(v)) state.rootpw = v;
+    updateLoginInfo();
   });
   $('rootpwBox').addEventListener('change', () => {
     const v = $('rootpwBox').value.trim();
     if (!(v === '' || v === '@empty' || /^[A-Za-z0-9@#%^&*_+=.,:!?-]{4,32}$/.test(v))) {
       $('rootpwBox').value = ''; state.rootpw = ''; showToast(t('rootpw.invalid'));
     }
+    updateLoginInfo();
   });
   const timezoneBox = $('timezoneBox');
   timezoneBox.addEventListener('focus', () => openTimezoneMenu(''));
@@ -569,7 +572,10 @@ function updateLoginInfo() {
   if (!state.source) return;
   const box = $('loginInfo');
   box.textContent = '';
-  const pwText = t(state.source.loginPw ? 'login.pw.' + state.source.loginPw : 'login.pw.none');
+  const pwKey = state.rootpw === '@empty' ? 'login.pw.none'
+    : state.rootpw ? 'login.pw.set'
+    : state.source.loginPw ? 'login.pw.' + state.source.loginPw : 'login.pw.native';
+  const pwText = t(pwKey);
   //  作密码占位,模板任意语言通用 /  marks the password slot, language-agnostic
   const parts = t('login.info', { pw: '' }).split('');
   const addWithRoot = (str) => {

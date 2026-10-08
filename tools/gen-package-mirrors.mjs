@@ -92,6 +92,7 @@ function publicProjection(data) {
       id: preset.id,
       kind: preset.kind,
       label: preset.label,
+      ...(preset.kind === 'default' ? { scope: 'all-sources' } : {}),
       sources: preset.kind === 'mirror'
         ? Object.keys(preset.roots || {}).flatMap((family) => familySources.get(family) || []).sort()
         : Object.keys(data.sourceFamilies).sort(),

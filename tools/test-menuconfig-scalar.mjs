@@ -40,7 +40,7 @@ const context = {
   },
 };
 vm.createContext(context);
-vm.runInContext(sourceRange('normalizeKconfigValueByType', 'catalogConflictRecordForPackage'), context,
+vm.runInContext(sourceRange('normalizeKconfigValueByType', 'catalogPackageRecordForSymbol'), context,
   { filename: 'menuconfig-scalar-fixture.js' });
 
 assert.equal(context.scalarKconfigOption({ type: 'string' }), true);

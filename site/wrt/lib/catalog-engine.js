@@ -235,8 +235,8 @@ export function orderCatalogIndex(index, policy = {}) {
   const branchCompare = (left, right) => {
     const leftName = String(left?.branch || left?.id || '');
     const rightName = String(right?.branch || right?.id || '');
-    const leftVersion = stableVersion(leftName);
-    const rightVersion = stableVersion(rightName);
+    const leftVersion = stableVersion(left?.version) || stableVersion(leftName);
+    const rightVersion = stableVersion(right?.version) || stableVersion(rightName);
     if (leftVersion && rightVersion) {
       for (let index = 0; index < Math.max(leftVersion.length, rightVersion.length); index++) {
         const difference = (rightVersion[index] || 0) - (leftVersion[index] || 0);
@@ -584,7 +584,21 @@ function expressionAstSymbols(value, seen = new Set()) {
   return symbols;
 }
 
+// Catalog facts are immutable within a snapshot. Reuse normalized structure,
+// never an evaluated value: conditions still read the current configuration.
+const NORMALIZED_AST_NODES = new WeakMap();
+const NORMALIZED_AST_ENVELOPES = new WeakMap();
+const NORMALIZED_RELATION_ROWS = new WeakMap();
+const NORMALIZED_RELATIONS = new WeakMap();
 function normalizeExpressionAstNode(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (NORMALIZED_AST_NODES.has(value)) return NORMALIZED_AST_NODES.get(value);
+  const node = normalizeExpressionAstNodeUncached(value);
+  NORMALIZED_AST_NODES.set(value, node);
+  if (node) NORMALIZED_AST_NODES.set(node, node);
+  return node;
+}
+function normalizeExpressionAstNodeUncached(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const kind = String(value.kind || value.type || '').trim().toLowerCase();
   if (kind === 'symbol') {
@@ -620,6 +634,15 @@ function normalizeExpressionAstNode(value) {
 }
 
 function normalizeExpressionAst(value) {
+  if (value && typeof value === 'object' && NORMALIZED_AST_ENVELOPES.has(value)) {
+    return NORMALIZED_AST_ENVELOPES.get(value);
+  }
+  const result = normalizeExpressionAstUncached(value);
+  if (value && typeof value === 'object') NORMALIZED_AST_ENVELOPES.set(value, result);
+  NORMALIZED_AST_ENVELOPES.set(result, result);
+  return result;
+}
+function normalizeExpressionAstUncached(value) {
   if (value && typeof value === 'object' && !Array.isArray(value) &&
       (Object.hasOwn(value, 'ast') || Object.hasOwn(value, 'complete'))) {
     const ast = normalizeExpressionAstNode(value.ast);
@@ -642,6 +665,13 @@ function relationTarget(value) {
 }
 
 function normalizeKconfigRelation(value) {
+  if (value && typeof value === 'object' && NORMALIZED_RELATIONS.has(value)) return NORMALIZED_RELATIONS.get(value);
+  const result = normalizeKconfigRelationUncached(value);
+  if (value && typeof value === 'object') NORMALIZED_RELATIONS.set(value, result);
+  NORMALIZED_RELATIONS.set(result, result);
+  return result;
+}
+function normalizeKconfigRelationUncached(value) {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const target = relationTarget(value);
     const condition = String(value.condition || value.if || '').trim();
@@ -668,16 +698,19 @@ function normalizeKconfigRelation(value) {
 }
 
 function kconfigRelationParts(value) {
-  const normalized = normalizeKconfigRelation(value);
-  return {
-    ...normalized,
-    symbol: normalized.target,
-    conditionAst: normalized.conditionAst,
-    raw: normalized.raw,
-  };
+  return normalizeKconfigRelation(value);
 }
 
 function kconfigRelationRows(record, kind) {
+  if (!record || typeof record !== 'object') return [];
+  let cache = NORMALIZED_RELATION_ROWS.get(record);
+  if (!cache) { cache = new Map(); NORMALIZED_RELATION_ROWS.set(record, cache); }
+  if (cache.has(kind)) return cache.get(kind);
+  const rows = kconfigRelationRowsUncached(record, kind);
+  cache.set(kind, rows);
+  return rows;
+}
+function kconfigRelationRowsUncached(record, kind) {
   const typedField = kind === 'select' ? 'selectRelations' : 'implyRelations';
   const rawField = kind === 'select' ? 'selectsExpressions' : 'impliesExpressions';
   const typed = record?.kconfig?.[typedField] || record?.[typedField];
@@ -1091,6 +1124,7 @@ export function expandCompactRelations(compact) {
         inheritedMenuVisibleIfAst: firstDefinition.inheritedMenuVisibleIfAst || [],
       },
       packageInfo: {
+        ...(capabilityRows.installation ? { installation: capabilityRows.installation } : {}),
         depends: packageDepends,
         rawDepends: packageDepends.map((item) => item.raw),
         dependencyRelations: packageDepends,
@@ -1139,6 +1173,7 @@ export function expandCompactRelations(compact) {
     relationsComplete: complete,
     capabilities: compact.relationCapabilities || [],
     packageClosureComplete: packageClosure.complete,
+    ...(compact.packageInstallation ? { packageInstallation: compact.packageInstallation } : {}),
     packageClosureCapabilities: packageClosure.capabilities,
     packageClosureValidation: packageClosure.validation,
     validation,
@@ -1474,6 +1509,18 @@ export function createCatalogModel(catalog) {
       ...(packageProviders.get(name) || []), ...rows.map((owner) => byPackage.get(owner)),
     ])]);
   }
+  const installedProviders = new Map();
+  const packageInstallation = relations.packageInstallation;
+  if (packageInstallation?.schema === 1 && packageInstallation.kind === 'openwrt-apk-provides-v1' &&
+      packageInstallation.configSymbol === 'USE_APK') {
+    for (const record of records) {
+      const apk = record.packageInfo?.installation?.apk;
+      for (const name of new Set([apk?.name, ...(apk?.provides || [])].filter(Boolean))) {
+        const owners = installedProviders.get(name) || [];
+        owners.push(record); installedProviders.set(name, owners);
+      }
+    }
+  }
   const reverseDependencies = new Map();
   // Derive a trusted reverse index from forward facts once per model. Old
   // authored reverse indexes can be stale; do not rescan all records for
@@ -1490,7 +1537,7 @@ export function createCatalogModel(catalog) {
         if (bySymbol.has(alias)) addDependent(alias, record.configSymbol);
       }
     }
-    for (const dependency of record.packageInfo?.depends || []) {
+    for (const dependency of allPackageDependencies(record)) {
       const names = [...(dependency.packages || []), ...(dependency.targets || []).map((row) =>
         typeof row === 'object' ? row.name || row.raw || '' : row)];
       for (const name of names) for (const target of packageProviders.get(packageCapabilityName(name)) || []) {
@@ -1568,6 +1615,7 @@ export function createCatalogModel(catalog) {
     byPackage,
     providers,
     packageProviders,
+    installedProviders,
     forwardDependents,
     reverseDependencies,
     reverseKconfig,
@@ -1927,6 +1975,7 @@ function validationOptions(inputValues, options = {}) {
     String(values.get('TARGET_SUBTARGET') || '').trim() && String(values.get('TARGET_PROFILE') || '').trim());
   return {
     phase: String(options.phase || 'interactive'), contextComplete, trustedSymbols,
+    scope: options.scope === 'menuconfig' ? 'menuconfig' : 'configuration',
     explicitSymbols: options.explicitSymbols instanceof Set ? options.explicitSymbols : new Set(options.explicitSymbols || []),
     closedSymbols: options.closedSymbols instanceof Set ? options.closedSymbols : new Set(options.closedSymbols || []),
     deferred: options.deferred || 'ignore',
@@ -2130,12 +2179,28 @@ function packageProviderRecords(model, name, { excludePackage = '' } = {}) {
 }
 
 function packageSatisfied(model, name, values, options = {}) {
-  return packageProviderRecords(model, name, options).some((record) => recordEnabled(record, values));
+  return packageProviderRecords(model, name, options).some((record) =>
+    options.installed ? recordInstalled(record, values) : recordEnabled(record, values));
+}
+
+function allPackageDependencies(record) {
+  const dependencies = record.packageInfo?.depends || [];
+  const runtime = record.packageInfo?.installation?.runtime;
+  if (runtime?.schema !== 1 || !runtime.dependencies?.length) return dependencies;
+  return [...dependencies, ...runtime.dependencies.map(row => ({ ...row, installed: true }))];
 }
 
 function packageDependencyViolations(model, record, values, options) {
   const violations = [];
-  for (const dependency of record.packageInfo?.depends || []) {
+  const runtime = record.packageInfo?.installation?.runtime;
+  if (recordInstalled(record, values) && runtime?.schema === 1 && runtime.unresolved?.length &&
+      options.deferred !== 'ignore') {
+    violations.push({ code: 'package-dependency-deferred', symbol: record.configSymbol,
+      package: record.package, dependency: runtime.unresolved.join(', '), packages: [],
+      deferred: true, installation: true, reason: 'unsupported-installation-dependency' });
+  }
+  for (const dependency of allPackageDependencies(record)) {
+    if (dependency.installed && !recordInstalled(record, values)) continue;
     if (!dependency?.required || !dependency.packages?.length) continue;
     if (dependency.condition) {
       const condition = evaluateExpressionRaw(dependency.condition, values, options);
@@ -2148,9 +2213,24 @@ function packageDependencyViolations(model, record, values, options) {
       }
     }
     const enforceable = dependency.packages.filter((name) => enforceablePackage(model, name));
-    if (!enforceable.length || dependency.packages.some((name) => packageSatisfied(model, name, values))) continue;
+    if (dependency.packages.some((name) => packageSatisfied(model, name, values,
+      { installed: dependency.installed }))) continue;
+    if (!enforceable.length) {
+      const absent = dependency.packages.every((name) => !packageProviderRecords(model, name).length);
+      if (absent && model.packageClosureComplete === true && model.packageClosureValidation.metadataComplete === true) {
+        violations.push({ code: 'package-dependency-unsatisfied', symbol: record.configSymbol, package: record.package,
+          dependency: dependency.raw || dependency.packages.join(' || '), packages: dependency.packages,
+          missing: true, reason: 'provider-absent' });
+      } else if (options.deferred !== 'ignore') {
+        violations.push({ code: 'package-dependency-deferred', symbol: record.configSymbol, package: record.package,
+          dependency: dependency.raw || dependency.packages.join(' || '), packages: dependency.packages,
+          deferred: true, reason: 'provider-availability-unknown' });
+      }
+      continue;
+    }
     violations.push({ code: 'package-dependency-unsatisfied', symbol: record.configSymbol, package: record.package,
-      dependency: dependency.raw || dependency.packages.join(' || '), packages: dependency.packages });
+      dependency: dependency.raw || dependency.packages.join(' || '), packages: dependency.packages,
+      ...(dependency.installed ? { installation: true } : {}) });
   }
   return violations;
 }
@@ -2310,7 +2390,7 @@ function recordViolations(model, record, values, rawOptions = {}) {
   else if (dependency.status === 'deferred' && options.deferred !== 'ignore') violations.push({
     code: 'kconfig-dependency-deferred', symbol: record.configSymbol, package: record.package,
     actual, maximum: dependency.maximum, requirements: dependency.requirements, deferred: true });
-  violations.push(...packageDependencyViolations(model, record, values, options));
+  if (options.scope !== 'menuconfig') violations.push(...packageDependencyViolations(model, record, values, options));
   violations.push(...moduleKconfigViolations(model, record, values, options));
   violations.push(...scalarKconfigViolations(record, values, options));
   violations.push(...kconfigRelationViolations(record, values, options));
@@ -2339,8 +2419,31 @@ export function validateConfig(model, inputValues, rawOptions = {}) {
   });
   const violations = [];
   for (const record of model.records) violations.push(...recordViolations(model, record, values, options));
+  // Versioned APK provides are exclusive installation identities. The native
+  // producer supplies ABI-qualified names; @ capabilities never enter this
+  // index. M builds a package but does not install it into RootFS.
+  if (options.scope !== 'menuconfig' && values.get('USE_APK') === 'y') {
+    if (options.deferred !== 'ignore') {
+      for (const record of model.records) {
+        const unresolved = record.packageInfo?.installation?.apk?.unresolvedProvides;
+        if (recordInstalled(record, values) && unresolved?.length) violations.push({
+          code: 'package-installation-deferred', package: record.package,
+          symbol: record.configSymbol, deferred: true, reason: 'unsupported-provides', provides: unresolved,
+        });
+      }
+    }
+    for (const [capability, owners] of model.installedProviders || []) {
+      const installed = owners.filter(record => recordInstalled(record, values));
+      if (installed.length < 2) continue;
+      const names = installed.map(record => record.package).sort();
+      violations.push({ code: 'package-conflict', package: names[0],
+        ...(names.length === 2 ? { otherPackage: names[1] } : { otherPackages: names.slice(1) }),
+        capability, installation: true, packageManager: 'apk' });
+    }
+  }
   const conflictKeys = new Set();
   for (const record of model.records) {
+    if (options.scope === 'menuconfig') break;
     if (!recordEnabled(record, values)) continue;
     for (const otherName of record.conflicts || record.packageInfo?.conflicts || []) {
       const capability = String(otherName || '').replace(/^PACKAGE_/, '');
@@ -2527,16 +2630,18 @@ function applyDirectKconfigDependencies(model, record, requested, values, change
 }
 
 function applyDirectPackageDependencies(model, record, requested, values, changes, options = {}) {
-  for (const dependency of record.packageInfo?.depends || []) {
+  for (const dependency of allPackageDependencies(record)) {
+    if (dependency.installed && requested !== 'y') continue;
     if (!dependency?.required || dependency.packages?.length !== 1) continue;
     if (dependency.condition && evaluateExpressionRaw(dependency.condition, values, options) !== 2) continue;
     const name = dependency.packages[0];
-    if (packageSatisfied(model, name, values)) continue;
-    const candidates = [model.byPackage.get(name), ...(model.providers.get(name) || []).map((provider) => model.byPackage.get(provider))]
+    if (packageSatisfied(model, name, values, { installed: dependency.installed })) continue;
+    const candidates = packageProviderRecords(model, name)
       .filter((target) => target?.kconfigSymbol && target.states?.length);
     if (candidates.length !== 1) continue;
     const target = candidates[0];
-    setValue(values, changes, target.configSymbol, enabledState(model, target, requested, values, options),
+    setValue(values, changes, target.configSymbol, enabledState(model, target,
+      dependency.installed ? 'y' : requested, values, options),
       'package-dependency', record.configSymbol);
   }
 }
@@ -2548,7 +2653,7 @@ function symbolAliases(symbol) {
   return new Set([value, unprefixed, `CONFIG_${unprefixed}`]);
 }
 
-function recordForwardReferences(record) {
+function recordForwardReferences(record, { relationTargets = true } = {}) {
   const symbols = new Set();
   const addExpressions = (rows) => {
     const visit = (expression) => {
@@ -2577,7 +2682,7 @@ function recordForwardReferences(record) {
   for (const kind of ['select', 'imply']) {
     for (const relation of kconfigRelationRows(record, kind)) {
       const target = relationTarget(relation);
-      if (target) symbols.add(target);
+      if (target && relationTargets) symbols.add(target);
       for (const symbol of expressionAstSymbols(relation?.conditionAst)) symbols.add(symbol);
       for (const symbol of referencedExpressionSymbols(relation?.condition || '')) symbols.add(symbol);
     }
@@ -2661,10 +2766,20 @@ function cascadeEnabled(model, values, changes, initialSymbols, options = {}) {
     if (!record || !recordEnabled(record, values)) continue;
     const before = changes.length;
     const requested = normalizeValue(values.get(symbol));
-    applyDirectKconfigDependencies(model, record, requested, values, changes, options);
+    // A native depends-on is an upper bound, not an instruction to turn its
+    // prerequisites on. Installation metadata is a separate preflight audit.
+    if (options.scope !== 'menuconfig') applyDirectKconfigDependencies(model, record, requested, values, changes, options);
+    // Restore user definitions when a newly enabled parent makes them legal,
+    // before its conditional selects choose a provider. Waiting until the
+    // final pass can introduce a wrong transient installation dependency.
+    for (const dependent of reverseCandidates(model, record)) {
+      if (!options.intentAssignments?.has(dependent) && options.preferredValues?.has(dependent)) {
+        restorePreferredValue(model, dependent, options.preferredValues.get(dependent), values, changes, options);
+      }
+    }
     applyKconfigRules(model, record, requested, values, changes, options);
     applyImplyRules(model, record, requested, values, changes, options);
-    applyDirectPackageDependencies(model, record, requested, values, changes, options);
+    if (options.scope !== 'menuconfig') applyDirectPackageDependencies(model, record, requested, values, changes, options);
     for (const change of changes.slice(before)) if (change.to !== 'n') queue.push(change.symbol);
   }
 }
@@ -2719,6 +2834,7 @@ function enforceActiveReverseRelations(model, values, changes, options = {}) {
   for (let pass = 0; pass < 64; pass++) {
     let progress = false;
     for (const targetSymbol of model.reverseSelects?.keys() || []) {
+      if (options.affectedSymbols && !options.affectedSymbols.has(targetSymbol)) continue;
       const target = model.bySymbol.get(targetSymbol);
       if (!target) continue;
       const rawActive = activeSelectRequirements(model, target, values, options);
@@ -2746,6 +2862,7 @@ function enforceActiveReverseRelations(model, values, changes, options = {}) {
       }
     }
     for (const targetSymbol of model.reverseImplies?.keys() || []) {
+      if (options.affectedSymbols && !options.affectedSymbols.has(targetSymbol)) continue;
       if (options.explicitSymbols?.has(targetSymbol)) continue;
       const target = model.bySymbol.get(targetSymbol);
       if (!target) continue;
@@ -2786,10 +2903,17 @@ function derivedDefaultState(model, record, values, options = {}) {
 }
 
 function reconcileDerivedDefaults(model, values, changes, options = {}) {
-  const records = model?.promptlessDefaultRecords || [];
-  const initialSymbols = new Set(values.keys());
-  const derivedSymbols = new Set();
-  const derivedReasons = new Map();
+  const records = (model?.promptlessDefaultRecords || []).filter(record =>
+    !options.affectedSymbols || options.affectedSymbols.has(record.configSymbol));
+  const initialSymbols = new Set([...values.keys(), ...(options.derivedSymbols || [])]);
+  // Persist ownership across transactions: an automatic dependency shutdown
+  // is not a user assignment, even when its effective N equals the baseline.
+  const derivedSymbols = new Set([...(options.derivedSymbols || [])].filter((symbol) =>
+    symbol !== options.intentSymbol && !options.explicitSymbols?.has(symbol) &&
+    !options.trustedSymbols?.has(symbol) &&
+    (model.bySymbol.get(symbol)?.defaults?.length || model.bySymbol.get(symbol)?.choice)));
+  const derivedReasons = new Map([...derivedSymbols].map((symbol) =>
+    [symbol, model.bySymbol.get(symbol)?.choice ? 'choice-default' : 'conditional-default']));
   for (let pass = 0; pass < 64; pass++) {
     const before = changes.length;
     let invalidatedTransientDefault = false;
@@ -2808,6 +2932,7 @@ function reconcileDerivedDefaults(model, values, changes, options = {}) {
     // newly selected choice member can activate selects/default conditions
     // after the first pass; revisit those defaults before declaring a fixpoint.
     for (const symbol of derivedSymbols) {
+      if (options.affectedSymbols && !options.affectedSymbols.has(symbol)) continue;
       const record = model.bySymbol.get(symbol);
       // Defaults provisionally filled before a choice/select settles are not
       // user assignments. Do not export an inactive scalar that was absent in
@@ -2912,6 +3037,17 @@ function prerequisiteStateCandidates(model, symbol, inputValues, options = {}) {
 function prerequisitePlanReplay(model, inputValues, steps, target, intent, options) {
   let values = new Map(inputValues);
   const changes = [];
+  if (intent.conflictViolations?.length) {
+    try {
+      const result = applyUserIntent(model, inputValues, { ...intent,
+        symbol: target.configSymbol, skipPrerequisitePlanning: true,
+        assignments: new Map([...steps.map((step) => [step.symbol, step.value]),
+          [target.configSymbol, intent.value]]) });
+      const explicit = new Set(steps.map((step) => step.symbol));
+      return { steps, ...result, automaticChanges: result.changes.filter((change) =>
+        !explicit.has(change.symbol) && change.symbol !== target.configSymbol) };
+    } catch { return null; }
+  }
   for (const step of steps) {
     let result;
     try {
@@ -2971,27 +3107,60 @@ export function deriveKconfigPrerequisitePlans(model, inputValues, record, reque
   options.explicitSymbols = normalizedIntent.explicitSymbols;
   const requestedLevel = stateLevel(value);
   const initialDependency = dependencyState(target, initialValues, requestedLevel, options);
-  if (initialDependency.status === 'satisfied') return { candidates: [], recommended: null };
-  const symbols = prerequisiteSymbols(model, target);
+  const conflictSearch = Boolean(intent.conflictViolations?.length);
+  if (initialDependency.status === 'satisfied' && !conflictSearch) return { candidates: [], recommended: null };
+  if (conflictSearch && intent.conflictViolations.some((row) => row.reason === 'provider-absent')) {
+    return { candidates: [], recommended: null };
+  }
+  const symbols = conflictSearch ? [] : prerequisiteSymbols(model, target);
+  // A conditional provider is a Kconfig prerequisite too. Discover gates
+  // from the exact selectors of conflicting participants, never package names.
+  if (conflictSearch) {
+    for (const violation of intent.conflictViolations) {
+      for (const name of [violation.package, violation.otherPackage, ...(violation.otherPackages || [])]) {
+        const participant = model.byPackage.get(name);
+        for (const selector of model.reverseSelects.get(participant?.configSymbol) || []) {
+          const source = model.bySymbol.get(selector);
+          for (const relation of kconfigRelationRows(source, 'select')) {
+            if (relationTarget(relation) !== participant.configSymbol) continue;
+            const condition = kconfigRelationParts(relation);
+            for (const symbol of unique([...referencedExpressionSymbols(condition.condition),
+              ...expressionAstSymbols(condition.conditionAst)])) {
+              const candidate = model.bySymbol.get(symbol);
+              if (candidate?.userSettable !== false && ['bool', 'tristate'].includes(candidate?.type) &&
+                  !options.trustedSymbols.has(symbol) && !options.explicitSymbols.has(symbol) &&
+                  symbol !== target.configSymbol && !symbols.includes(symbol)) symbols.push(symbol);
+            }
+          }
+        }
+      }
+    }
+  }
   if (!symbols.length) return { candidates: [], recommended: null };
 
   const queue = [{ values: initialValues, steps: [], used: new Set() }];
   const visited = new Set();
   const candidates = [];
   const maxSteps = Math.min(6, Math.max(1, symbols.length));
+  const bounded = conflictSearch || Boolean(intent.planningBudget);
+  const maxNodes = Math.min(conflictSearch ? 32 : 4096, Math.max(1, Number(intent.planningBudget?.maxNodes) || 4096));
+  const deadline = bounded ? Date.now() + Math.min(1000, Math.max(1, Number(intent.planningBudget?.timeMs) || 250)) : Infinity;
+  let minimumCost = Infinity;
   let visitedNodes = 0;
-  while (queue.length && visitedNodes < 4096) {
+  while (queue.length && visitedNodes < maxNodes && Date.now() <= deadline) {
     const node = queue.shift();
+    if (node.steps.length > minimumCost) break;
     visitedNodes += 1;
     const key = symbols.map((symbol) => normalizeValue(node.values.get(symbol) ?? 'n')).join('|');
     if (visited.has(key)) continue;
     visited.add(key);
     const dependency = dependencyState(target, node.values, requestedLevel, options);
-    if (dependency.status === 'satisfied' && node.steps.length) {
+    if ((conflictSearch || dependency.status === 'satisfied') && node.steps.length) {
       const replay = prerequisitePlanReplay(model, initialValues, node.steps, target, {
         ...normalizedIntent, value,
       }, options);
       if (replay) {
+        minimumCost = Math.min(minimumCost, node.steps.length);
         candidates.push({
           ...replay,
           symbol: target.configSymbol,
@@ -3001,12 +3170,15 @@ export function deriveKconfigPrerequisitePlans(model, inputValues, record, reque
           key: node.steps.map((step) => `${step.symbol}=${step.value}`).join('\\0'),
         });
       }
-      continue;
+      if (replay || !conflictSearch) continue;
     }
-    if (node.steps.length >= maxSteps || dependency.status === 'deferred') continue;
+    if (node.steps.length >= Math.min(maxSteps, minimumCost) || dependency.status === 'deferred') continue;
     for (const symbol of symbols) {
       if (node.used.has(symbol)) continue;
-      for (const nextValue of prerequisiteStateCandidates(model, symbol, node.values, options)) {
+      const candidates = conflictSearch && !options.explicitSymbols.has(symbol)
+        ? (model.bySymbol.get(symbol)?.states || []).filter((state) => state !== (node.values.get(symbol) ?? 'n'))
+        : prerequisiteStateCandidates(model, symbol, node.values, options);
+      for (const nextValue of candidates) {
         const values = new Map(node.values);
         values.set(symbol, nextValue);
         queue.push({
@@ -3020,6 +3192,12 @@ export function deriveKconfigPrerequisitePlans(model, inputValues, record, reque
         });
       }
     }
+  }
+  // Partial exploration cannot prove uniqueness. Keep it unresolved rather
+  // than freezing the browser or guessing from a truncated candidate set.
+  if (bounded && queue.some((node) => node.steps.length <= minimumCost) &&
+      (visitedNodes >= maxNodes || Date.now() > deadline)) {
+    return { candidates: [], recommended: null, reason: 'search-budget' };
   }
   // The BFS can reach the same set of operations in more than one order. The
   // order is not a second user choice, so collapse those permutations before
@@ -3044,7 +3222,11 @@ export function deriveKconfigPrerequisitePlans(model, inputValues, record, reque
 function applyScalarIntent(model, inputValues, record, intent) {
   const initial = new Map(valuesMap(inputValues));
   const options = validationOptions(initial, { ...(intent.validationOptions || {}), model,
-    typedRelationsComplete: model.typedRelationsComplete === true });
+    typedRelationsComplete: model.typedRelationsComplete === true,
+    intentSymbol: record.configSymbol,
+    explicitSymbols: new Set(intent.explicitSymbols || []),
+    derivedSymbols: new Set(intent.derivedSymbols || []),
+  });
   const constraints = kconfigStateConstraints(model, record, initial, options);
   const remove = intent.value === null;
   const value = remove ? null : String(intent.value ?? '');
@@ -3073,6 +3255,31 @@ function applyScalarIntent(model, inputValues, record, intent) {
   return { values, changes, ...derived, violations, diagnostics: [] };
 }
 
+function restorePreferredValue(model, symbol, rawPreferred, values, changes, options) {
+  const record = model.bySymbol.get(symbol);
+  if (!record) return false;
+  if (['string', 'int', 'hex'].includes(record.type)) {
+    return rawPreferred != null && dependencyLevel(record, values, options) > 0 &&
+      scalarValueValid(record.type, String(rawPreferred)) &&
+      setValue(values, changes, symbol, String(rawPreferred), 'preferred-intent', '', true);
+  }
+  if (!['bool', 'tristate'].includes(record.type)) return false;
+  const preferred = normalizeKconfigStateValue(record, rawPreferred);
+  const constraints = kconfigStateConstraints(model, record, values, options);
+  let level = Math.min(stateLevel(preferred), constraints.maximumLevel);
+  if (!options.explicitSymbols.has(symbol)) {
+    const implied = activeImplyRequirements(model, record, values, options)
+      .reduce((maximum, item) => Math.max(maximum, item.level), 0);
+    level = Math.max(level, Math.min(implied, constraints.maximumLevel));
+  }
+  level = Math.max(level, constraints.minimumLevel);
+  if (record.choice && (model.choices.get(record.choice) || []).some(sibling =>
+    sibling !== symbol && normalizeValue(values.get(sibling) ?? 'n') === 'y')) level = 0;
+  if (record.type === 'bool' && level === 1) level = 2;
+  const effective = normalizeKconfigStateValue(record, stateForKconfigLevel(model, record, level, values, options));
+  return setValue(values, changes, symbol, effective, 'preferred-intent');
+}
+
 export function applyUserIntent(model, inputValues, intent) {
   const initialValues = new Map(valuesMap(inputValues));
   const values = new Map(initialValues);
@@ -3081,7 +3288,24 @@ export function applyUserIntent(model, inputValues, intent) {
   const value = normalizeValue(intent?.value ?? 'n');
   const record = model.bySymbol.get(symbol);
   if (!record) throw new Error(`Catalog does not define ${symbol}`);
-  if (['string', 'int', 'hex'].includes(record.type)) return applyScalarIntent(model, inputValues, record, intent);
+  if (['string', 'int', 'hex'].includes(record.type)) {
+    if (intent?.assignments) throw new Error('Kconfig state plans accept only bool/tristate assignments');
+    return applyScalarIntent(model, inputValues, record, intent);
+  }
+  // A conflict switch is one user transaction, not a sequence of invalid
+  // intermediate configurations. Only changed assignments are explicit;
+  // unchanged participant rows must not lock an automatic provider to N.
+  const assignments = new Map(intent?.assignments || []);
+  assignments.set(symbol, value);
+  for (const [assignedSymbol, assignedValue] of assignments) {
+    const assigned = model.bySymbol.get(assignedSymbol);
+    if (!assigned || !['bool', 'tristate'].includes(assigned.type) ||
+        !['n', 'm', 'y'].includes(assignedValue) ||
+        (assigned.type === 'bool' && assignedValue === 'm')) {
+      throw new Error(`Invalid Kconfig state assignment: ${assignedSymbol}=${assignedValue}`);
+    }
+    setValue(values, changes, assignedSymbol, assignedValue, 'user');
+  }
   const options = validationOptions(initialValues, {
     ...(intent?.validationOptions || {}), model, typedRelationsComplete: model?.typedRelationsComplete === true,
   });
@@ -3095,14 +3319,29 @@ export function applyUserIntent(model, inputValues, intent) {
   // (for example the dependency gate) remain free to lower the stale target.
   options.intentSymbol = symbol;
   options.explicitSymbols = normalizedIntent.explicitSymbols;
-  const constraints = kconfigStateConstraints(model, record, initialValues, options);
+  if (intent?.assignments) {
+    for (const assignedSymbol of assignments.keys()) options.explicitSymbols.add(assignedSymbol);
+  }
+  options.derivedSymbols = new Set(intent?.derivedSymbols || []);
+  options.preferredValues = intent?.preferredValues instanceof Map ? intent.preferredValues :
+    new Map(Object.entries(intent?.preferredValues || {}));
+  options.intentAssignments = assignments;
+  // The browser opts in only after a full transaction on this exact model and
+  // revision. Imports/model replacement use the full solver again. The same
+  // worklist and evaluator serve both paths; no effective values are cached.
+  if (options.scope === 'menuconfig' && intent?.incremental && model.typedRelationsComplete === true) {
+    options.affectedSymbols = affectedKconfigSymbols(model, new Set([
+      ...assignments.keys(), ...(intent.dependencySymbols || []), ...options.preferredValues.keys(),
+    ]));
+  }
+  const constraints = kconfigStateConstraints(model, record, intent?.assignments ? values : initialValues, options);
   const legal = constraints.legalStates.includes(value);
   const alreadyRequested = value !== 'n' && legal && constraints.current === value &&
     constraints.dependencyStatus === 'satisfied' && !constraints.readOnly;
   const systemSelectable = legal && stateLevel(value) >= constraints.minimumLevel &&
     (value === 'n' ? record.canDisable !== false :
       (stateLevel(value) <= constraints.maximumLevel || stateLevel(value) <= constraints.minimumLevel));
-  const repairablePositiveIntent = value !== 'n' && constraints.minimumLevel === 0 &&
+  const repairablePositiveIntent = options.scope !== 'menuconfig' && value !== 'n' && constraints.minimumLevel === 0 &&
     constraints.legalStates.includes(value) && !constraints.readOnly;
   const allowed = intent?.force === true ? systemSelectable :
     (constraints.selectableStates.includes(value) || repairablePositiveIntent || alreadyRequested);
@@ -3122,60 +3361,52 @@ export function applyUserIntent(model, inputValues, intent) {
   // from a non-Y member to Y can reach this boundary.  Do not run this check
   // from import, validateConfig, or Worker reconstruction: those paths model
   // non-interactive conf/defconfig semantics and must remain readable.
-  if (record.choice && value === 'y' &&
-      normalizeValue(initialValues.get(symbol) ?? 'n') !== 'y') {
-    const choice = model.choiceDetails?.get(record.choice);
+  for (const [assignedSymbol, assignedValue] of assignments) {
+    const assigned = model.bySymbol.get(assignedSymbol);
+    if (!assigned.choice || assignedValue !== 'y' ||
+        normalizeValue(initialValues.get(assignedSymbol) ?? 'n') === 'y') continue;
+    const choice = model.choiceDetails?.get(assigned.choice);
     if (choice) {
       const resetState = choiceResetConditionState(model, choice, initialValues, options);
       if (resetState.status !== 'unsatisfied') {
-        throwChoiceResetIntentError(choice, symbol, value,
-          normalizeValue(initialValues.get(symbol) ?? 'n'), resetState, constraints);
+        throwChoiceResetIntentError(choice, assignedSymbol, assignedValue,
+          normalizeValue(initialValues.get(assignedSymbol) ?? 'n'), resetState,
+          kconfigStateConstraints(model, assigned, initialValues, options));
       }
     }
   }
   const beforeKeys = new Set(validateConfig(model, initialValues, options).map(violationKey));
-  setValue(values, changes, symbol, value, 'user');
-  if (record.choice && value === 'y') {
-    for (const sibling of model.choices.get(record.choice) || []) if (sibling !== symbol) setValue(values, changes, sibling, 'n', 'choice', symbol);
-  } else if (record.choice && value === 'm') {
-    for (const sibling of model.choices.get(record.choice) || []) {
-      const siblingRecord = model.bySymbol.get(sibling);
-      if (sibling !== symbol && normalizeValue(values.get(sibling) ?? 'n') === 'y' && siblingRecord?.states?.includes('m')) {
-        setValue(values, changes, sibling, 'm', 'choice', symbol);
+  for (const [assignedSymbol, assignedValue] of assignments) {
+    const assigned = model.bySymbol.get(assignedSymbol);
+    if (assigned.choice && assignedValue === 'y') {
+      for (const sibling of model.choices.get(assigned.choice) || []) {
+        if (sibling !== assignedSymbol) setValue(values, changes, sibling, 'n', 'choice', assignedSymbol);
+      }
+    } else if (assigned.choice && assignedValue === 'm') {
+      for (const sibling of model.choices.get(assigned.choice) || []) {
+        const siblingRecord = model.bySymbol.get(sibling);
+        if (sibling !== assignedSymbol && normalizeValue(values.get(sibling) ?? 'n') === 'y' && siblingRecord?.states?.includes('m')) {
+          setValue(values, changes, sibling, 'm', 'choice', assignedSymbol);
+        }
       }
     }
   }
-  if (value === 'n') cascadeDisabled(model, values, changes, [symbol], options); else cascadeEnabled(model, values, changes, [symbol], options);
+  // Enable replacement providers before withdrawing their alternatives, so
+  // conditional selectors do not unnecessarily disable surviving consumers.
+  cascadeEnabled(model, values, changes, [...assignments].filter(([, state]) => state !== 'n').map(([key]) => key), options);
+  cascadeDisabled(model, values, changes, [...assignments].filter(([, state]) => state === 'n').map(([key]) => key), options);
   propagateKconfigChanges(model, values, changes, 0, options);
   if (changes.some((change) => change.to === 'n')) pruneUnusedDependencies(model, values, changes,
     intent?.dependencySymbols, intent?.protectedSymbols, options);
   enforceActiveReverseRelations(model, values, changes, options);
-  const preferredValues = intent?.preferredValues instanceof Map ? intent.preferredValues :
-    new Map(Object.entries(intent?.preferredValues || {}));
+  const preferredValues = options.preferredValues;
   let restored = true;
   for (let pass = 0; restored && pass < preferredValues.size + 1; pass++) {
     restored = false;
     const preferredStart = changes.length;
     for (const [preferredSymbol, rawPreferred] of preferredValues) {
-      if (preferredSymbol === symbol || !model.bySymbol.has(preferredSymbol)) continue;
-      const preferredRecord = model.bySymbol.get(preferredSymbol);
-      if (!['bool', 'tristate'].includes(preferredRecord.type)) continue;
-      const preferred = normalizeKconfigStateValue(preferredRecord, rawPreferred);
-      const preferredConstraints = kconfigStateConstraints(model, preferredRecord, values, options);
-      let effectiveLevel = Math.min(stateLevel(preferred), preferredConstraints.maximumLevel);
-      if (!options.explicitSymbols.has(preferredSymbol)) {
-        const impliedLevel = activeImplyRequirements(model, preferredRecord, values, options)
-          .reduce((maximum, item) => Math.max(maximum, item.level), 0);
-        effectiveLevel = Math.max(effectiveLevel, Math.min(impliedLevel, preferredConstraints.maximumLevel));
-      }
-      effectiveLevel = Math.max(effectiveLevel, preferredConstraints.minimumLevel);
-      if (preferredRecord.choice && (model.choices.get(preferredRecord.choice) || []).some((sibling) =>
-        sibling !== preferredSymbol && normalizeValue(values.get(sibling) ?? 'n') === 'y')) effectiveLevel = 0;
-      if (preferredRecord.type === 'bool' && effectiveLevel === 1) effectiveLevel = 2;
-      const effective = normalizeKconfigStateValue(preferredRecord,
-        stateForKconfigLevel(model, preferredRecord, effectiveLevel, values, options));
-      if (normalizeValue(values.get(preferredSymbol) ?? 'n') === effective) continue;
-      if (setValue(values, changes, preferredSymbol, effective, 'preferred-intent')) restored = true;
+      if (assignments.has(preferredSymbol) || !model.bySymbol.has(preferredSymbol)) continue;
+      if (restorePreferredValue(model, preferredSymbol, rawPreferred, values, changes, options)) restored = true;
     }
     propagateKconfigChanges(model, values, changes, preferredStart, options);
   }
@@ -3185,9 +3416,46 @@ export function applyUserIntent(model, inputValues, intent) {
     pruneUnusedDependencies(model, values, changes, intent?.dependencySymbols, intent?.protectedSymbols, options);
     derived = reconcileDerivedDefaults(model, values, changes, options);
   }
+  // A conditional select can provisionally select one provider, then switch
+  // to another when derived defaults/preferred user values settle. Reuse the
+  // ordinary orphan proof for previously dependency-owned values too: a
+  // retained conditional provider can become unused on re-enabling its owner.
+  // Protected baseline and explicit values are never pruned.
+  const transientDependencies = new Set([...(intent?.dependencySymbols || []), ...changes.filter((change) =>
+    ['select', 'kconfig-dependency', 'package-dependency'].includes(change.reason) &&
+    stateLevel(initialValues.get(change.symbol) ?? 'n') === 0)
+    .map((change) => change.symbol)].filter(symbol =>
+    !assignments.has(symbol) && !options.explicitSymbols.has(symbol)));
+  if (transientDependencies.size) {
+    pruneUnusedDependencies(model, values, changes, transientDependencies, intent?.protectedSymbols, options);
+    derived = reconcileDerivedDefaults(model, values, changes, options);
+  }
   const violations = validateConfig(model, values, options);
   const diagnostics = selectSuppressionDiagnostics(model, values, options);
-  if (value !== 'n') {
+  if (intent?.assignments && !violations.some((item) => isBlockingViolation(item) &&
+      (item.symbol === symbol || !beforeKeys.has(violationKey(item))))) {
+    for (const [assignedSymbol, assignedValue] of assignments) {
+      const final = kconfigStateConstraints(model, model.bySymbol.get(assignedSymbol), values, options);
+      // A prerequisite may become selected at the same value as the user
+      // request after convergence. A fixed-Y control is not editable, but its
+      // already-satisfied Y assignment is still a legal transaction result.
+      const satisfied = final.current === assignedValue && final.legalStates.includes(assignedValue) &&
+        final.dependencyStatus === 'satisfied' && !final.readOnly;
+      if (values.get(assignedSymbol) !== assignedValue ||
+          (!final.selectableStates.includes(assignedValue) && !satisfied)) {
+        const attempted = new Map(values);
+        for (const [key, next] of assignments) attempted.set(key, next);
+        cascadeEnabled(model, attempted, [], [...assignments.keys()], options);
+        const reasons = validateConfig(model, attempted, options).filter(isBlockingViolation);
+        const error = new Error(reasons.length ? formatViolations(reasons) :
+          `${assignedSymbol} cannot be set to ${assignedValue.toUpperCase()} under the final Kconfig constraints`);
+        error.name = 'CatalogIntentError'; error.constraints = final;
+        error.violations = reasons;
+        throw error;
+      }
+    }
+  }
+  if (value !== 'n' || intent?.assignments) {
     // A positive user intent must still be rejected when the requested symbol
     // was already present in an invalid imported state.  Comparing only with
     // beforeKeys would otherwise turn a direct re-selection of an unsatisfied
@@ -3203,6 +3471,12 @@ export function applyUserIntent(model, inputValues, intent) {
         !beforeKeys.has(violationKey(item)));
       if (!intent?.skipPrerequisitePlanning && blocking.some((item) => item.code === 'kconfig-dependency-unsatisfied')) {
         const prerequisitePlans = deriveKconfigPrerequisitePlans(model, initialValues, record, value, normalizedIntent);
+        if (prerequisitePlans?.recommended) error.prerequisitePlans = prerequisitePlans;
+      }
+      if (!intent?.skipPrerequisitePlanning && !error.prerequisitePlans &&
+          blocking.some((item) => item.code === 'package-conflict')) {
+        const prerequisitePlans = deriveKconfigPrerequisitePlans(model, initialValues, record, value,
+          { ...normalizedIntent, conflictViolations: blocking });
         if (prerequisitePlans?.recommended) error.prerequisitePlans = prerequisitePlans;
       }
       throw error;
@@ -3239,6 +3513,7 @@ function configurationRepairRecord(model, violation) {
 function configurationRepairIntent(rawOptions, validation, value) {
   return {
     dependencySymbols: rawOptions.dependencySymbols,
+    derivedSymbols: rawOptions.derivedSymbols,
     protectedSymbols: rawOptions.protectedSymbols,
     preferredValues: rawOptions.preferredValues,
     // validationOptions has already materialized one-shot iterators (the UI
@@ -3252,7 +3527,7 @@ function configurationRepairIntent(rawOptions, validation, value) {
 }
 
 function configurationRepairCandidate(model, values, violation, rawOptions, validation) {
-  if (!['kconfig-dependency-unsatisfied', 'package-dependency-unsatisfied',
+  if (!['kconfig-dependency-unsatisfied', 'package-dependency-unsatisfied', 'package-conflict',
     'kconfig-scalar-invalid', 'kconfig-range-unsatisfied'].includes(violation?.code)) {
     return null;
   }
@@ -3274,12 +3549,23 @@ function configurationRepairCandidate(model, values, violation, rawOptions, vali
     } catch { return null; }
   }
   if (!record?.configSymbol || stateLevel(values.get(record.configSymbol) ?? 'n') <= 0) return null;
-  const value = configurationRepairValue(record, values);
-  if (value === 'n') return null;
+  const value = violation.missing || violation.code === 'package-conflict' ? 'n' : configurationRepairValue(record, values);
+  if (value === 'n' && !violation.missing && violation.code !== 'package-conflict') return null;
   const intent = configurationRepairIntent(rawOptions, validation, value);
   let result = null;
   let steps = [];
-  if (violation.code === 'kconfig-dependency-unsatisfied') {
+  if (violation.missing) {
+    try { result = compatibilityDisablePlan(model, record, values, intent); } catch { return null; }
+    steps = result?.steps || [];
+  } else if (violation.code === 'package-conflict') {
+    const names = [violation.package, violation.otherPackage, ...(violation.otherPackages || [])].filter(Boolean);
+    const plans = deriveCompatibilityPlans(model, values, { values,
+      records: names.map(name => model.byPackage.get(name)).filter(Boolean),
+      rule: { match: 'all-installed', packages: names },
+    }, intent);
+    if (!plans.recommended) return null;
+    result = plans.recommended; steps = result.steps || [];
+  } else if (violation.code === 'kconfig-dependency-unsatisfied') {
     const plans = deriveKconfigPrerequisitePlans(model, values, record, value, intent);
     if (!plans.recommended) return null;
     result = plans.recommended;
@@ -3316,9 +3602,11 @@ function configurationRepairCandidate(model, values, violation, rawOptions, vali
   if (finalKeys.has(currentKey) || [...finalKeys].some((key) => !beforeKeys.has(key))) return null;
   const candidateChanges = (result.changes || []).filter((change) => change?.from !== change?.to);
   if (!candidateChanges.length) return null;
+  const actionRecord = violation.code === 'package-conflict'
+    ? model.bySymbol.get(result.symbol) || record : record;
   return {
-    symbol: record.configSymbol,
-    package: record.package || packageNameFromSymbol(record.configSymbol),
+    symbol: actionRecord.configSymbol,
+    package: actionRecord.package || packageNameFromSymbol(actionRecord.configSymbol),
     value,
     steps: steps.map((step) => ({
       symbol: String(step.symbol || ''),
@@ -3337,8 +3625,10 @@ function configurationRepairCandidate(model, values, violation, rawOptions, vali
  * Deterministic repair classes include a package dependency
  * with one selectable provider (resolved by applyUserIntent's normal cascade),
  * and a Kconfig dependency with one unique minimum prerequisite plan (resolved
- * by deriveKconfigPrerequisitePlans).  Conflicts, choices, multiple providers,
- * deferred expressions, and equal-cost alternatives are never guessed at.
+ * by deriveKconfigPrerequisitePlans). Installation conflicts reuse the same
+ * compatibility planner; proven absent providers can disable their consumer.
+ * Choices, multiple providers, deferred expressions and equal-cost alternatives
+ * are never guessed at.
  * Stale descendants of a tracked disabled owner may instead be reconciled
  * through the existing dependency cascade without re-enabling that owner.
  * Every simulated action must remove its selected violation without adding a
@@ -3372,7 +3662,7 @@ export function deriveConfigurationRepairPlan(model, inputValues, rawOptions = {
     if (!blocking.length) break;
     let progressed = false;
     for (const violation of blocking) {
-      if (!['kconfig-dependency-unsatisfied', 'package-dependency-unsatisfied',
+      if (!['kconfig-dependency-unsatisfied', 'package-dependency-unsatisfied', 'package-conflict',
         'kconfig-scalar-invalid', 'kconfig-range-unsatisfied'].includes(violation.code)) continue;
       const candidate = configurationRepairCandidate(model, values, violation, rawOptions, validation);
       if (!candidate) continue;
@@ -3492,6 +3782,7 @@ const COMPATIBILITY_RULE_KEYS_V3 = new Set([...COMPATIBILITY_RULE_KEYS_V2, 'sour
 const COMPATIBILITY_RULE_KEYS_V4 = new Set([...COMPATIBILITY_RULE_KEYS_V3, 'buildDependency']);
 const COMPATIBILITY_RULE_KEYS_V5 = new Set([...COMPATIBILITY_RULE_KEYS_V4, 'policy', 'environments', 'evidence']);
 const COMPATIBILITY_RULE_KEYS_V6 = new Set([...COMPATIBILITY_RULE_KEYS_V5, 'preferredDisable']);
+const COMPATIBILITY_RULE_KEYS_V7 = new Set([...COMPATIBILITY_RULE_KEYS_V6, 'preservePackages', 'inputHashes']);
 // `triggerPackages` is retained only for reading already-published legacy
 // rules.  New rules describe the failed package and derive active triggers
 // from the exact Catalog graph, so a manually maintained trigger list can no
@@ -3499,7 +3790,7 @@ const COMPATIBILITY_RULE_KEYS_V6 = new Set([...COMPATIBILITY_RULE_KEYS_V5, 'pref
 const COMPATIBILITY_BUILD_DEPENDENCY_KEYS = new Set(['package', 'triggerPackages']);
 const COMPATIBILITY_ENVIRONMENT_KEYS = new Set(['source', 'branch', 'packageAvailability', 'targetScope']);
 const COMPATIBILITY_EVIDENCE_KEYS = new Set(['source', 'branch', 'sourceCommit', 'targetScope', 'refs']);
-const COMPATIBILITY_SCHEMAS = new Set([2, 3, 4, 5, 6]);
+const COMPATIBILITY_SCHEMAS = new Set([2, 3, 4, 5, 6, 7]);
 const COMPATIBILITY_TARGET_SCOPE_KEYS = new Set(['system', 'subtarget', 'profile']);
 const COMPATIBILITY_FAILURE_KEYS = new Set(['phase', 'cause', 'code', 'observed']);
 const COMPATIBILITY_ID_RE = /^[A-Z][A-Z0-9-]{2,31}$/;
@@ -3507,6 +3798,7 @@ const COMPATIBILITY_PACKAGE_RE = /^[A-Za-z0-9][A-Za-z0-9+_.@-]{0,95}$/;
 const COMPATIBILITY_SOURCE_RE = /^(?:\*|[A-Za-z0-9_.-]{1,64})$/;
 const COMPATIBILITY_BRANCH_RE = /^(?:[A-Za-z0-9._/-]{1,160}|[A-Za-z0-9._/-]*\*[A-Za-z0-9._/-]*)$/;
 const COMPATIBILITY_COMMIT_RE = /^[a-f0-9]{40}$/;
+const COMPATIBILITY_INPUT_HASH_RE = /^[a-f0-9]{64}$/;
 const COMPATIBILITY_TARGET_RE = /^[A-Za-z0-9_+@./-]{1,160}$/;
 const COMPATIBILITY_FAILURE_CODE_RE = /^[a-z][a-z0-9-]{2,95}$/;
 const COMPATIBILITY_OBSERVED_KEY_RE = /^[A-Za-z][A-Za-z0-9]{0,63}$/;
@@ -3667,7 +3959,7 @@ export function normalizeCompatibilityDocument(raw) {
   if (!compatibilityObject(raw)) throw compatibilityError('compatibility document must be an object');
   compatibilityKeys(raw, COMPATIBILITY_DOCUMENT_KEYS, 'compatibility document');
   const schema = Number(raw.schema);
-  if (!COMPATIBILITY_SCHEMAS.has(schema) || !Array.isArray(raw.rules)) throw compatibilityError('compatibility document requires schema 2, 3, 4, 5, or 6 and a rules array');
+  if (!COMPATIBILITY_SCHEMAS.has(schema) || !Array.isArray(raw.rules)) throw compatibilityError('compatibility document requires schema 2, 3, 4, 5, 6, or 7 and a rules array');
   if (new TextEncoder().encode(JSON.stringify(raw)).byteLength > 512 * 1024) throw compatibilityError('compatibility document is too large');
   const ids = new Set();
   const rules = raw.rules.map((rule, index) => {
@@ -3675,7 +3967,8 @@ export function normalizeCompatibilityDocument(raw) {
     if (!compatibilityObject(rule)) throw compatibilityError(`${label} must be an object`);
     const allowedRuleKeys = schema === 2 ? COMPATIBILITY_RULE_KEYS_V2 :
       schema === 3 ? COMPATIBILITY_RULE_KEYS_V3 :
-        schema === 4 ? COMPATIBILITY_RULE_KEYS_V4 : schema === 5 ? COMPATIBILITY_RULE_KEYS_V5 : COMPATIBILITY_RULE_KEYS_V6;
+        schema === 4 ? COMPATIBILITY_RULE_KEYS_V4 : schema === 5 ? COMPATIBILITY_RULE_KEYS_V5 :
+          schema === 6 ? COMPATIBILITY_RULE_KEYS_V6 : COMPATIBILITY_RULE_KEYS_V7;
     compatibilityKeys(rule, allowedRuleKeys, label);
     const id = String(rule.id || '').trim();
     if (!COMPATIBILITY_ID_RE.test(id) || ids.has(id)) throw compatibilityError(`${label}.id is invalid or duplicate`);
@@ -3716,10 +4009,25 @@ export function normalizeCompatibilityDocument(raw) {
     if (schema >= 3 && rule.sourceCommits !== undefined) {
       normalized.sourceCommits = compatibilityStrings(rule.sourceCommits, `${id}.sourceCommits`, COMPATIBILITY_COMMIT_RE, 1, 32);
     }
+    if (rule.inputHashes !== undefined) {
+      if (preventive || !normalized.sourceCommits?.length) {
+        throw compatibilityError(`${id}.inputHashes requires an exact sourceCommits rule`);
+      }
+      normalized.inputHashes = compatibilityStrings(rule.inputHashes, `${id}.inputHashes`, COMPATIBILITY_INPUT_HASH_RE, 1, 32);
+    }
     if (rule.preferredDisable !== undefined) {
       normalized.preferredDisable = compatibilityStrings(rule.preferredDisable, `${id}.preferredDisable`, COMPATIBILITY_PACKAGE_RE, 1, 16);
       if (rule.buildDependency || normalized.preferredDisable.some((name) => !normalized.packages.includes(name))) {
         throw compatibilityError(`${id}.preferredDisable requires ordinary rule participants`);
+      }
+    }
+    if (rule.preservePackages !== undefined) {
+      normalized.preservePackages = compatibilityStrings(rule.preservePackages,
+        `${id}.preservePackages`, COMPATIBILITY_PACKAGE_RE, 1, 16);
+      if (rule.buildDependency || normalized.match !== 'all-installed' ||
+          normalized.preservePackages.some((name) => !normalized.packages.includes(name) ||
+            normalized.preferredDisable?.includes(name))) {
+        throw compatibilityError(`${id}.preservePackages requires non-disabled all-installed participants`);
       }
     }
     if (schema >= 3 && rule.targetScope !== undefined) {
@@ -3760,6 +4068,10 @@ export function normalizeCompatibilityDocument(raw) {
 // Model facts are immutable for one Catalog snapshot. Cache structure only;
 // every evaluation still resolves defaults against its own current values.
 const DEFAULT_WORKLIST_INDEXES = new WeakMap();
+export function prepareKconfigWorklist(model) {
+  // Pure structural warm-up at Catalog load, before a card becomes interactive.
+  defaultWorklistIndex(model);
+}
 function defaultWorklistIndex(model) {
   const cached = DEFAULT_WORKLIST_INDEXES.get(model);
   if (cached) return cached;
@@ -3768,33 +4080,68 @@ function defaultWorklistIndex(model) {
   const addDependent = (symbol, record) => {
     const key = String(symbol || '').trim();
     if (!key) return;
-    const rows = dependents.get(key) || new Set();
-    rows.add(record);
-    dependents.set(key, rows);
+    for (const alias of symbolAliases(key)) {
+      const rows = dependents.get(alias) || new Set();
+      rows.add(record); dependents.set(alias, rows);
+    }
   };
   // A bounded pass count silently misses long default chains.  A dependency
   // worklist revisits only records whose typed default expression mentions a
   // value that just became known, and naturally stops at cycles/UNKNOWN.
   for (const record of records) {
-    for (const symbol of recordForwardReferences(record)) addDependent(symbol, record);
+    for (const symbol of recordForwardReferences(record, { relationTargets: false })) addDependent(symbol, record);
     const defaults = Array.isArray(record.defaultsTyped) && record.defaultsTyped.length
       ? record.defaultsTyped : (record.defaults || []);
     for (const raw of defaults) {
       const { valueExpression, condition } = defaultParts(raw);
       for (const symbol of [...referencedExpressionSymbols(valueExpression),
         ...referencedExpressionSymbols(condition)]) addDependent(symbol, record);
+      for (const symbol of expressionAstSymbols(raw)) addDependent(symbol, record);
     }
+    for (const kind of ['select', 'imply']) for (const relation of kconfigRelationRows(record, kind)) {
+      const target = model.bySymbol.get(relationTarget(relation));
+      if (target) addDependent(record.configSymbol, target);
+    }
+    for (const rows of [record.promptIf, record.visibleIf, record.menuVisibleIf,
+      record.promptIfAst, record.visibleIfAst, record.menuVisibleIfAst]) {
+      for (const symbol of [...expressionAstSymbols(rows), ...nestedExpressionStrings(rows || [])
+        .flatMap(referencedExpressionSymbols)]) addDependent(symbol, record);
+    }
+  }
+  for (const choice of model?.choiceDetails?.values?.() || []) {
+    const members = (choice.members || []).map(symbol => model.bySymbol.get(symbol)).filter(Boolean);
+    const references = new Set([...(choice.members || []), ...expressionAstSymbols(choice),
+      ...nestedExpressionStrings([choice.depends, choice.dependsExpressions, choice.defaults,
+        choice.promptIf, choice.visibleIf, choice.menuVisibleIf]).flatMap(referencedExpressionSymbols)]);
+    for (const symbol of references) for (const member of members) addDependent(symbol, member);
   }
   const index = { records, dependents };
   if (model && typeof model === 'object') DEFAULT_WORKLIST_INDEXES.set(model, index);
   return index;
 }
 
+function affectedKconfigSymbols(model, seeds) {
+  const { dependents } = defaultWorklistIndex(model);
+  const symbols = new Set(seeds);
+  const queue = [...symbols];
+  for (let cursor = 0; cursor < queue.length; cursor++) {
+    for (const record of dependents.get(queue[cursor]) || []) {
+      if (symbols.has(record.configSymbol)) continue;
+      symbols.add(record.configSymbol); queue.push(record.configSymbol);
+    }
+  }
+  // Module mode changes the legal states of every tristate, even without an
+  // explicit MODULES expression in the producer's dependency table.
+  if (symbols.has('MODULES') || symbols.has('CONFIG_MODULES')) return null;
+  return symbols;
+}
+
 function materializeKconfigDefaults(model, inputValues, options) {
   const values = new Map(valuesMap(inputValues));
   const { records, dependents } = defaultWorklistIndex(model);
-  const queue = [...records];
-  const queued = new Set(records);
+  const queue = options.affectedSymbols ? [...options.affectedSymbols]
+    .map(symbol => model.bySymbol.get(symbol)).filter(Boolean) : [...records];
+  const queued = new Set(queue);
   for (let cursor = 0; cursor < queue.length; cursor++) {
     const record = queue[cursor];
     queued.delete(record);
@@ -3814,6 +4161,7 @@ function materializeKconfigDefaults(model, inputValues, options) {
   // conditions are satisfied; an unresolved condition remains UNKNOWN and is
   // deliberately not guessed into a selected member.
   for (const choice of model?.choiceDetails?.values?.() || []) {
+    if (options.affectedSymbols && !(choice.members || []).some(symbol => options.affectedSymbols.has(symbol))) continue;
     if ((choice.members || []).some((symbol) => stateLevel(values.get(symbol) ?? 'n') > 0)) continue;
     const memberSymbol = choiceDefaultMember(model, choice, values, options);
     if (!memberSymbol) continue;
@@ -3850,10 +4198,12 @@ function compatibilityRuleTriggered(rule, records, values, options, triggerRecor
     .every((record) => compatibilityRecordMatches(rule, record, values));
 }
 
-function compatibilityRuleScopeMismatch(rule, sourceCommit, target) {
+function compatibilityRuleScopeMismatch(rule, sourceCommit, target, inputsHash) {
   const mismatches = [];
   if (rule.sourceCommits && (!COMPATIBILITY_COMMIT_RE.test(sourceCommit) ||
       !rule.sourceCommits.includes(sourceCommit))) mismatches.push('sourceCommit');
+  if (rule.inputHashes && (!COMPATIBILITY_INPUT_HASH_RE.test(inputsHash) ||
+      !rule.inputHashes.includes(inputsHash))) mismatches.push('inputsHash');
   if (rule.targetScope && Object.entries(rule.targetScope).some(([key, values]) =>
     !values.includes(target[key]))) mismatches.push('targetScope');
   return mismatches;
@@ -3866,7 +4216,7 @@ function compatibilityEnvironmentMatches(environment, sourceId, branchName, targ
     values.includes(target[key]));
 }
 
-function compatibilityNearMatch(rule, sourceId, branchName, sourceCommit, target, records, values, mismatches) {
+function compatibilityNearMatch(rule, sourceId, branchName, sourceCommit, target, records, values, mismatches, inputsHash) {
   const matchedPackages = records
     .filter((record) => compatibilityRecordMatches(rule, record, values))
     .map((record) => record.package || packageNameFromSymbol(record.configSymbol))
@@ -3881,12 +4231,14 @@ function compatibilityNearMatch(rule, sourceId, branchName, sourceCommit, target
     matchedPackages: [...new Set(matchedPackages)],
     verified: {
       sourceCommits: rule.sourceCommits ? [...rule.sourceCommits] : [],
+      ...(rule.inputHashes ? { inputHashes: [...rule.inputHashes] } : {}),
       targetScope: rule.targetScope
         ? Object.fromEntries(Object.entries(rule.targetScope).map(([key, values]) => [key, [...values]]))
         : null,
     },
     current: {
       sourceCommit,
+      ...(rule.inputHashes ? { inputsHash } : {}),
       targetScope: { ...target },
     },
   };
@@ -3905,6 +4257,7 @@ export function evaluateNormalizedCompatibilityRules(model, normalized, inputVal
   }
   const sourceId = String(context.sourceId || ''), branchName = String(context.branchName || '');
   const sourceCommit = String(context.sourceCommit || '').toLowerCase();
+  const inputsHash = String(context.inputsHash || '').toLowerCase();
   const target = {
     system: String(context.targetSystem || ''),
     subtarget: String(context.targetSubtarget || ''),
@@ -3926,7 +4279,7 @@ export function evaluateNormalizedCompatibilityRules(model, normalized, inputVal
       if (!branchPatterns.some((pattern) => compatibilityPatternMatches(branchName, pattern))) continue;
     }
     const mismatches = rule.policy === 'preventive' ? [] :
-      compatibilityRuleScopeMismatch(rule, sourceCommit, target);
+      compatibilityRuleScopeMismatch(rule, sourceCommit, target, inputsHash);
     const ifPresent = environment?.packageAvailability === 'if-present';
     const missingPackages = [];
     const records = rule.packages.map((packageName) => {
@@ -3983,7 +4336,7 @@ export function evaluateNormalizedCompatibilityRules(model, normalized, inputVal
     }
     if (packageMatch && mismatches.length) {
       diagnostics.push(compatibilityNearMatch(rule, sourceId, branchName, sourceCommit,
-        target, allRecords, values, mismatches));
+        target, allRecords, values, mismatches, inputsHash));
     } else if (packageMatch) {
       warnings.push({ rule, records: allRecords, directRecords: records, triggerRecords,
         buildDependencyRecord, values });
@@ -4292,7 +4645,7 @@ function expressionAstDependencyProof(ast, inputValues, options = {}) {
         value: child.level === UNKNOWN ? UNKNOWN : child.level > 0 ? 'n' : 'y',
         // A negative condition being true because its symbol is N does not
         // make that symbol a package prerequisite.
-        symbols: new Set(), requiredSymbols: new Set(), ambiguous: child.ambiguous };
+        symbols: new Set(), requiredSymbols: new Set(), ambiguous: child.level === UNKNOWN };
     }
     if (node.kind === 'compare') {
       const left = expressionAstDependencyProof(node.left, inputValues, options);
@@ -4428,7 +4781,7 @@ function expressionDependencyProof(expression, inputValues, options = {}) {
   };
   const unary = () => {
     if (tokens[at] === '!') { at++; const value = unary(); return { level: value.level === UNKNOWN ? UNKNOWN : 2 - value.level,
-      symbols: new Set(), requiredSymbols: new Set(), ambiguous: value.ambiguous }; }
+      symbols: new Set(), requiredSymbols: new Set(), ambiguous: value.level === UNKNOWN }; }
     return primary();
   };
   const and = () => { let value = unary(); while (tokens[at] === '&&') { at++; value = combineAnd(value, unary()); } return value; };
@@ -4503,7 +4856,8 @@ function activePackageGraph(model, values, options = {}, includeInactive = false
     if (!record?.package || !record.configSymbol || (!includeInactive && !recordEnabled(record, values))) continue;
     const source = record.package;
     graph.set(source, graph.get(source) || new Set());
-    for (const dependency of record.packageInfo?.depends || []) {
+    for (const dependency of allPackageDependencies(record)) {
+      if (dependency.installed && !includeInactive && !recordInstalled(record, values)) continue;
       addActiveDependencyEdge(source, dependency);
     }
     // The narrow package-closure contract is sufficient for exact
@@ -4698,10 +5052,13 @@ function deriveGraphBuildDependencyPlans(model, inputValues, warning, intent = {
     const record = packageGraphRecord(model, name);
     if (record && !directTargets.has(record.configSymbol)) dependencySymbols.add(record.configSymbol);
   }
-  const cleanupIntent = { ...intent, dependencySymbols };
+  const preferredValues = intent.preferredValues instanceof Map
+    ? new Map(intent.preferredValues) : new Map(Object.entries(intent.preferredValues || {}));
+  const protectedSymbols = new Set(intent.protectedSymbols || []);
+  const explicitSymbols = new Set(intent.explicitSymbols || options.explicitSymbols || []);
+  const cleanupIntent = { ...intent, dependencySymbols, preferredValues, protectedSymbols, explicitSymbols };
   let values = new Map(startingValues);
   let changes = [];
-  const allSteps = [];
   for (const record of targetRecords) {
     if (normalizeValue(values.get(record.configSymbol) ?? 'n') === 'n') continue;
     let plan = null;
@@ -4711,7 +5068,16 @@ function deriveGraphBuildDependencyPlans(model, inputValues, warning, intent = {
     }
     values = plan.values;
     changes = compatibilityPlanChanges(startingValues, values, [...changes, ...plan.changes]);
-    allSteps.push(...plan.steps);
+    // Every cut belongs to one recommendation transaction. A subsequent
+    // cut must not restore an earlier accepted N from the imported user's
+    // original Y preference. Only accepted actions/targets lose protection;
+    // unrelated explicit selections and surviving shared dependencies keep it.
+    for (const target of [...plan.steps, ...requiredTargets]) {
+      if (normalizeValue(values.get(target.symbol) ?? 'n') !== 'n') continue;
+      preferredValues.set(target.symbol, 'n');
+      protectedSymbols.delete(target.symbol);
+      explicitSymbols.add(target.symbol);
+    }
   }
   const stepBySymbol = new Map();
   for (const record of targetRecords) stepBySymbol.set(record.configSymbol, {
@@ -4743,22 +5109,56 @@ export function deriveCompatibilityPlans(model, inputValues, warning, intent = {
   const startingValues = warning?.values || inputValues;
   if (!rule || records.length < 1) throw compatibilityError('compatibility warning is incomplete');
   if (rule.buildDependency) return deriveBuildDependencyPlans(model, inputValues, warning, intent);
+  const initial = valuesMap(startingValues);
+  const retainedTargets = (rule.preservePackages || []).map((name) => {
+    const record = model.byPackage.get(name);
+    return { symbol: record?.configSymbol || '', package: name,
+      value: normalizeValue(initial.get(record?.configSymbol) ?? 'n') };
+  });
+  // Retention constrains this recommendation, not every future user choice.
+  // The application transaction records the same retained explicit intent.
+  if (retainedTargets.some((target) => !target.symbol || target.value !== 'y')) {
+    return { candidates: [], recommended: null, preferredUnavailable: true };
+  }
+  const retainedSymbols = new Set(retainedTargets.map((target) => target.symbol));
+  const retainedIntent = retainedTargets.length ? {
+    ...intent,
+    protectedSymbols: new Set([...(intent.protectedSymbols || []), ...retainedSymbols]),
+    explicitSymbols: new Set([...(intent.explicitSymbols || []), ...retainedSymbols]),
+    preferredValues: new Map([...valuesMap(intent.preferredValues || {}), ...retainedTargets.map((target) =>
+      [target.symbol, target.value])]),
+  } : intent;
+  let retainedValues = new Map(initial);
+  const retentionChanges = [];
+  try {
+    for (const target of retainedTargets) {
+      const result = applyUserIntent(model, retainedValues,
+        { ...retainedIntent, symbol: target.symbol, value: target.value });
+      retainedValues = result.values;
+      retentionChanges.push(...result.changes);
+    }
+  } catch {
+    return { candidates: [], recommended: null, preferredUnavailable: true };
+  }
   const candidates = [];
   for (const record of records) {
-    if (!record.canDisable) continue;
+    if (!record.canDisable || retainedSymbols.has(record.configSymbol)) continue;
     try {
-      const plan = compatibilityDisablePlan(model, record, startingValues, intent);
+      const plan = compatibilityDisablePlan(model, record, retainedValues, retainedIntent);
       if (!plan?.steps.length) continue;
+      if (retainedTargets.some((target) => normalizeValue(plan.values.get(target.symbol) ?? 'n') !== target.value)) continue;
       const resolved = !compatibilityWarningTriggered(model, { ...warning, values: plan.values }, plan.values,
         intent.validationOptions || {});
       if (!resolved) continue;
       const stepSymbols = new Set(plan.steps.map((step) => step.symbol));
+      const changes = compatibilityPlanChanges(initial, plan.values, [...retentionChanges, ...plan.changes]);
       candidates.push({
         package: record.package,
         symbol: record.configSymbol,
         steps: plan.steps,
-        changes: plan.changes,
-        automaticChanges: plan.changes.filter((change) => !stepSymbols.has(change.symbol)),
+        retainedTargets,
+        changes,
+        automaticChanges: changes.filter((change) => !stepSymbols.has(change.symbol)),
         values: plan.values,
         cost: plan.steps.length,
       });

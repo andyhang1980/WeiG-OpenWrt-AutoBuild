@@ -212,6 +212,7 @@ function catalogApplicationsPluginData(document, catalog = MENU_CATALOG) {
     JSON.stringify(catalog.applications?.fields) === JSON.stringify(['symbol', 'package', 'group', 'hot'])
     ? catalog.applications.rows || [] : null;
   if (branchRows) {
+    const curatedGroups = new Set(document?.groups || []);
     const plugins = branchRows.map(([symbol, packageName, group, hot]) => {
       const item = metadata.get(packageName) || {};
       const observed = sizes.get(packageName);
@@ -220,7 +221,9 @@ function catalogApplicationsPluginData(document, catalog = MENU_CATALOG) {
         pkg: packageName,
         catalogOnly: true,
         catalogCandidates: [packageName],
-        group: String(group || 'Applications'),
+        // Native menu paths are not curated presentation categories. Keep
+        // known authored groups; older unmapped paths share the Other group.
+        group: curatedGroups.has(group) ? group : 'Other',
         hot: hot === 1 || item.hot === true,
         archiveBytes: observed?.archiveBytes ?? null,
         installedBytes: observed?.installedBytes ?? null,
@@ -390,14 +393,17 @@ function initCatalogApplicationsDemand() {
     catalogApplicationsObserver.observe(step);
   }
 }
-async function fetchCatalogBundle(source, branch, signal, forceRefresh = false) {
+async function fetchCatalogBundle(source, branch, signal, forceRefresh = false, onCore = null) {
   const remote = await CATALOG_LOADER.fetchBundle({
     sourceId: source?.id || '',
     branchName: branch?.branch || branch?.id || '',
     signal,
     forceRefresh,
     preferredAssetProvider: menuAssetProvider,
+    includeProfileBaselines: true,
+    onCore,
   });
+  signal?.throwIfAborted();
   menuIndexProvider = remote.indexProvider;
   menuAssetProvider = remote.provider === 'cache' ? menuAssetProvider : remote.provider;
   remote.index = stableCatalogIndex(remote.index);
@@ -602,9 +608,6 @@ function bindMenuOptionTooltip(element) {
   bindUiTooltipContent(element, { body: text });
   element.dataset.uiTooltipSource = 'menu-option';
   return element;
-}
-function hideMenuTooltip(force = false) {
-  hideUiTooltip(force);
 }
 function classifyCatalogLoadFailure(errorText = '', diagnostics = [], online = true) {
   const failedRows = (Array.isArray(diagnostics) ? diagnostics : []).filter((row) => row?.ok === false);
@@ -1189,14 +1192,18 @@ async function ensureCatalogProfileBaselines(source = selectedCatalogSource(), b
   const revision = String(MENU_INDEX?.assetRef || '').trim().toLowerCase();
   const key = [source?.id, branch?.branch || branch?.id, branch?.commit, revision].join('|');
   if (PROFILE_BASELINE_STORE && profileBaselineKey === key) return PROFILE_BASELINE_STORE;
-  if (catalogProfileBaselineLoadingPromise?.key === key) return catalogProfileBaselineLoadingPromise.promise;
+  if (catalogProfileBaselineLoadingPromise?.key === key &&
+      catalogProfileBaselineLoadingPromise.loader === catalogShardLoader &&
+      catalogProfileBaselineLoadingPromise.generation === menuCatalogSeq) return catalogProfileBaselineLoadingPromise.promise;
   const contract = branch?.assets?.profileBaselines;
   if (!source || !branch || !catalogShardLoader || !contract?.asset) {
     throw new Error('Catalog Native Profile baseline is unavailable');
   }
+  const shardLoader = catalogShardLoader;
+  const generation = menuCatalogSeq;
   const promise = (async () => {
     const module = await ensureProfileBaselineModule();
-    const document = await catalogShardLoader('profileBaselines');
+    const document = await shardLoader('profileBaselines');
     if (!document) throw new Error('Catalog Native Profile baseline shard is unavailable');
     const store = module.createProfileBaselineStore(document, {
       sourceId: source.id,
@@ -1207,11 +1214,14 @@ async function ensureCatalogProfileBaselines(source = selectedCatalogSource(), b
       profiles: contract.profiles,
       configGroups: contract.configGroups,
     });
-    PROFILE_BASELINE_STORE = store;
-    profileBaselineKey = key;
+    if (generation === menuCatalogSeq && shardLoader === catalogShardLoader &&
+        revision === String(MENU_INDEX?.assetRef || '').trim().toLowerCase()) {
+      PROFILE_BASELINE_STORE = store;
+      profileBaselineKey = key;
+    }
     return store;
   })();
-  catalogProfileBaselineLoadingPromise = { key, promise };
+  catalogProfileBaselineLoadingPromise = { key, promise, loader: shardLoader, generation };
   try { return await promise; }
   finally {
     if (catalogProfileBaselineLoadingPromise?.promise === promise) catalogProfileBaselineLoadingPromise = null;
@@ -1237,7 +1247,7 @@ function nativeProfileBaselineEntries() {
 async function loadCatalog(source, branch, applyDefault = true, requested = null, options = {}) {
   if (!source || !branch) return null;
   const key = `${source.id}/${branch.branch}`;
-  if (!options.forceRefresh && menuCatalogKey === key && MENU_CATALOG) return MENU_CATALOG;
+  if (!options.forceRefresh && menuCatalogKey === key && MENU_CATALOG && !MENU_CATALOG.coreOnly) return MENU_CATALOG;
   if (!options.forceRefresh && menuLoadingKey === key && menuCatalogPromise) return menuCatalogPromise;
   menuCatalogAbortController?.abort();
   const abortController = new AbortController();
@@ -1245,11 +1255,34 @@ async function loadCatalog(source, branch, applyDefault = true, requested = null
   menuLoadingKey = key;
   const seq = ++menuCatalogSeq;
   setCatalogLoadState('loading');
+  MENU_CATALOG = null;
+  menuCatalogKey = '';
+  CATALOG_MODEL = null;
+  catalogShardLoader = null;
+  PROFILE_BASELINE_STORE = null;
+  ACTIVE_PROFILE_BASELINE = null;
   $('menuconfigStatus').className = 'hint';
   $('menuconfigStatus').textContent = t('catalog.loading');
   menuCatalogPromise = (async () => {
     const remote = await fetchCatalogBundle(
       source, branch, abortController.signal, options.forceRefresh === true,
+      async (core) => {
+        abortController.signal.throwIfAborted();
+        if (seq !== menuCatalogSeq) throw new DOMException('Stale Catalog selection', 'AbortError');
+        MENU_INDEX = stableCatalogIndex(core.index);
+        MENU_CATALOG = { ...core.data, coreOnly: true };
+        const selected = renderCatalogTargetSelectors(catalogTargetPreference(false,
+          requested || { sourceId: source.id, branchId: core.branch.id }));
+        if (!selected.valid || !selected.target || !selected.profile) {
+          throw new Error('Catalog Target Profile is unavailable');
+        }
+        // Source/Branch remain switchable. A partial core cannot be submitted
+        // or used to edit runtime options while graph/baseline are loading.
+        for (const control of document.querySelectorAll('#targetDynamicSelectors select')) control.disabled = true;
+        renderCatalogBuildInfo();
+        renderCatalogLoadState();
+        await nextUiPaint();
+      },
     );
     const catalog = remote.data;
     catalog.loadedFrom = remote.url;
@@ -1261,11 +1294,13 @@ async function loadCatalog(source, branch, applyDefault = true, requested = null
     const activeSource = active.source || source;
     const activeBranch = active.branch || branch;
     CATALOG_MODEL = remote.model;
+    CATALOG_ENGINE.prepareKconfigWorklist(CATALOG_MODEL);
     catalogShardLoader = remote.loadShard || null;
     PROFILE_BASELINE_STORE = null;
     ACTIVE_PROFILE_BASELINE = null;
     profileBaselineKey = "";
     await ensureCatalogProfileBaselines(activeSource, activeBranch);
+    if (seq !== menuCatalogSeq || abortController.signal.aborted) return null;
     if (catalog.splitAssets) catalog.menu = CATALOG_SCHEMA6_MODULE.createRuntimeMenu(CATALOG_MODEL);
     MENU_CATALOG = catalog;
     menuCatalogKey = key;
@@ -1292,9 +1327,12 @@ async function loadCatalog(source, branch, applyDefault = true, requested = null
     return catalog;
   })().catch((error) => {
     if (seq !== menuCatalogSeq) return null;
+    abortController.abort();
     MENU_CATALOG = null;
     CATALOG_MODEL = null;
     catalogShardLoader = null;
+    PROFILE_BASELINE_STORE = null;
+    ACTIVE_PROFILE_BASELINE = null;
     menuCatalogKey = '';
     const diagnostics = Array.isArray(error?.diagnostics) ? error.diagnostics : [];
     setCatalogLoadState('error', error, diagnostics);
@@ -1318,6 +1356,27 @@ function isCatalogTargetSymbol(symbol, catalog = MENU_CATALOG) {
   return !menuTargetSymbols.size && (catalog?.targets || []).some((target) =>
     symbol === `TARGET_${target.board}` || symbol === `TARGET_${target.board}_${target.subtarget}`);
 }
+function catalogTargetPreference(preferState = true, targetRequest = null) {
+  const policyTarget = CATALOG_ENGINE.preferredCatalogTarget(
+    MENU_CATALOG, PROJECT?.catalogSelectionPolicy?.preferredTarget || {});
+  const selectorIds = (MENU_CATALOG?.targetSelectors || DEFAULT_TARGET_SELECTORS)
+    .map((selector) => selector.id);
+  return CATALOG_ENGINE.catalogTargetPreference({
+    requestedTarget: selectorIds.some((id) => targetRequest?.[id] || targetRequest?.[`${id}Symbol`]) ? targetRequest : null,
+    currentTarget: selectorIds.some((id) => targetSelectorValues[id]) ? targetSelectorValues : null,
+    stateTarget: state.device?.id === 'catalog-target' ? state.device.target : null,
+    policyTarget,
+    newCatalogRequested: Boolean(targetRequest?.sourceId || targetRequest?.branchId),
+    preferState,
+  });
+}
+function catalogBranchPreference(source, preferState = true, requested = null) {
+  const control = $('targetBranch');
+  return requested?.branchId ||
+    (preferState && state.device?.id === 'catalog-target' && state.source?.id === source.id ? state.version?.id : '') ||
+    (control?.dataset.catalogSourceId === source.id ? control.value : '') ||
+    source.branches.find((item) => item.branch === source.defaultBranch && item.state !== 'unavailable')?.id || '';
+}
 function renderCatalogPicker(preferState = true, requested = null) {
   if (!MENU_INDEX?.sources?.length) return null;
   const targetRequest = requested;
@@ -1330,11 +1389,11 @@ function renderCatalogPicker(preferState = true, requested = null) {
   const sourceId = fillTargetSelect('targetSource', MENU_INDEX.sources,
     (item) => item.id, (item) => item.label || item.id, currentSource);
   const source = MENU_INDEX.sources.find((item) => item.id === sourceId);
-  const currentBranch = targetRequest?.branchId ||
-    (preferState && state.device?.id === 'catalog-target' ? state.version?.id : '');
+  const currentBranch = catalogBranchPreference(source, preferState, targetRequest);
   let branchId = fillTargetSelect('targetBranch', source.branches,
     (item) => item.id, catalogBranchLabel, currentBranch);
   const branchSelect = $('targetBranch');
+  branchSelect.dataset.catalogSourceId = sourceId;
   for (const option of branchSelect.options) {
     const item = source.branches.find((candidate) => candidate.id === option.value);
     option.disabled = item?.state === 'unavailable';
@@ -1355,26 +1414,11 @@ function renderCatalogPicker(preferState = true, requested = null) {
     return null;
   }
   const key = `${source.id}/${branch.branch}`;
-  if (!MENU_CATALOG || menuCatalogKey !== key) {
+  if (!MENU_CATALOG || MENU_CATALOG.coreOnly || menuCatalogKey !== key) {
     if (catalogAutoloadReady) loadCatalog(source, branch, true, targetRequest).catch(() => {});
     return null;
   }
-  const policyTarget = CATALOG_ENGINE.preferredCatalogTarget(
-    MENU_CATALOG, PROJECT?.catalogSelectionPolicy?.preferredTarget || {});
-  const selectorIds = (MENU_CATALOG?.targetSelectors || DEFAULT_TARGET_SELECTORS)
-    .map((selector) => selector.id);
-  const requestedTarget = selectorIds.some((id) =>
-    targetRequest?.[id] || targetRequest?.[`${id}Symbol`]);
-  const currentTarget = selectorIds.some((id) => targetSelectorValues[id]);
-  const newCatalogRequested = Boolean(targetRequest?.sourceId || targetRequest?.branchId);
-  const preferred = CATALOG_ENGINE.catalogTargetPreference({
-    requestedTarget: requestedTarget ? targetRequest : null,
-    currentTarget: currentTarget ? targetSelectorValues : null,
-    stateTarget: state.device?.id === 'catalog-target' ? state.device.target : null,
-    policyTarget,
-    newCatalogRequested,
-    preferState,
-  });
+  const preferred = catalogTargetPreference(preferState, targetRequest);
   const selectedTarget = renderCatalogTargetSelectors(preferred);
   if (!selectedTarget.valid) {
     $('menuconfigBox').hidden = true;

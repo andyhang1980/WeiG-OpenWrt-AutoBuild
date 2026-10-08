@@ -7,7 +7,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { readFrontendRuntimeSource } from './lib/frontend-source.mjs';
-import { createCatalogModel, validateConfig, reconcileKconfigDerivedValues } from '../site/wrt/lib/catalog-engine.js';
+import { applyUserIntent, createCatalogModel, prepareKconfigWorklist, REQUIRED_KCONFIG_RELATION_CAPABILITIES,
+  validateConfig, reconcileKconfigDerivedValues } from '../site/wrt/lib/catalog-engine.js';
 import { createRuntimeMenu, mergeHiddenShard, mergeMenuShards } from '../site/wrt/lib/catalog-schema6.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -90,6 +91,56 @@ for (const record of providerModel.records) {
 const providerValues = new Map([['PACKAGE_consumer', 'y'], ['PACKAGE_provider-17', 'y']]);
 for (let count = 0; count < 20; count++) assert.deepEqual(validateConfig(providerModel, providerValues), []);
 assert.equal(providerReads, 0, 'provider metadata must be indexed once, not rescanned per validation');
+
+// A settled revision may reuse the exact same worklist, but never cached
+// effective defaults. Compare each transition with a full native replay and
+// count irrelevant default evaluations rather than relying on CPU speed.
+const symbolAst = name => ({ raw: name, complete: true, ast: { kind: 'symbol', name } });
+const nativeFixture = [
+  { configSymbol: 'MODULES', type: 'bool', states: ['n', 'y'] },
+  { configSymbol: 'DEFAULT_MODULE', type: 'tristate', states: ['n', 'm', 'y'],
+    hidden: true, userSettable: false, defaults: ['m'] },
+  { configSymbol: 'SWITCH', type: 'bool', states: ['n', 'y'] },
+  { configSymbol: 'DERIVED', type: 'bool', states: ['n', 'y'], hidden: true, userSettable: false,
+    defaults: ['y if SWITCH', 'n'], kconfig: { selectsExpressions: [['LINKED']] } },
+  { configSymbol: 'LINKED', type: 'bool', states: ['n', 'y'],
+    kconfig: { dependsExpressions: [['SWITCH']], dependsAst: [symbolAst('SWITCH')] } },
+  ...Array.from({ length: 2000 }, (_, index) => ({ configSymbol: `UNRELATED_${index}`, type: 'bool',
+    states: ['n', 'y'], hidden: true, userSettable: false, defaults: ['n'] })),
+];
+const nativeModel = createCatalogModel({ schema: 6, relations: { schema: 2, records: nativeFixture,
+  relationsComplete: true, relationCapabilities: REQUIRED_KCONFIG_RELATION_CAPABILITIES } });
+assert.equal(nativeModel.typedRelationsComplete, true);
+const nativeIntent = value => ({ symbol: 'SWITCH', value, validationOptions: { scope: 'menuconfig' },
+  skipPrerequisitePlanning: true });
+let settled = applyUserIntent(nativeModel, new Map([['SWITCH', 'n'], ['MODULES', 'n']]), nativeIntent('n'));
+prepareKconfigWorklist(nativeModel);
+let unrelatedReads = 0;
+for (const record of nativeModel.records.filter(row => row.configSymbol.startsWith('UNRELATED_'))) {
+  const defaults = record.defaultsTyped;
+  Object.defineProperty(record, 'defaultsTyped', { get() { unrelatedReads++; return defaults; } });
+}
+for (const value of ['y', 'n', 'y', 'n']) {
+  const intent = { ...nativeIntent(value), derivedSymbols: settled.derivedSymbols,
+    dependencySymbols: new Set(['LINKED']) };
+  const full = applyUserIntent(nativeModel, settled.values, intent);
+  const before = unrelatedReads;
+  const incremental = applyUserIntent(nativeModel, settled.values, { ...intent, incremental: true });
+  assert.equal(unrelatedReads, before, 'an unrelated promptless default was recomputed on a settled click');
+  assert.deepEqual(incremental.values, full.values, 'dirty native replay differs from full resolution');
+  assert.deepEqual(incremental.violations, full.violations);
+  assert.equal(incremental.values.get('DERIVED'), value);
+  assert.equal(incremental.values.get('LINKED'), value);
+  settled = incremental;
+}
+const modulesIntent = { symbol: 'MODULES', value: 'y', validationOptions: { scope: 'menuconfig' },
+  skipPrerequisitePlanning: true, derivedSymbols: settled.derivedSymbols };
+const fullModules = applyUserIntent(nativeModel, settled.values, modulesIntent);
+const beforeModules = unrelatedReads;
+const dirtyModules = applyUserIntent(nativeModel, settled.values, { ...modulesIntent, incremental: true });
+assert(unrelatedReads > beforeModules, 'MODULES must fall back to full native resolution');
+assert.deepEqual(dirtyModules.values, fullModules.values);
+assert.equal(dirtyModules.values.get('DEFAULT_MODULE'), 'm');
 
 const runtime = createRuntimeMenu(model);
 const menu = mergeMenuShards({ menu: runtime }, model, {

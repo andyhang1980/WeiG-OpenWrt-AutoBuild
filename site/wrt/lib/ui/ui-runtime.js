@@ -12,6 +12,12 @@
 let activeUiOperation = null;
 const operationInertRoots = new Map();
 let operationStatus = null;
+function nextUiPaint() {
+  return new Promise((resolve) => {
+    const fallback = setTimeout(resolve, 50);
+    requestAnimationFrame(() => { clearTimeout(fallback); setTimeout(resolve, 0); });
+  });
+}
 for (const type of ['click', 'pointerdown', 'keydown', 'beforeinput', 'change']) {
   document.addEventListener(type, (event) => {
     if (!activeUiOperation || (activeUiOperation.interacting > 0 && event.target?.closest?.('#modal'))) return;
@@ -23,8 +29,9 @@ function syncUiOperation() {
   for (const [element, inert] of operationInertRoots) element.inert = inert;
   operationInertRoots.clear();
   const operation = activeUiOperation;
-  document.body.classList.toggle('ui-operation-busy', Boolean(operation));
-  $('app')?.setAttribute('aria-busy', String(Boolean(operation)));
+  const computing = Boolean(operation && operation.interacting === 0);
+  document.body.classList.toggle('ui-operation-busy', computing);
+  $('app')?.setAttribute('aria-busy', String(computing));
   if (operationStatus) operationStatus.hidden = !operation || operation.interacting > 0;
   if (!operation) return;
   for (const element of document.body.children) {
@@ -59,10 +66,7 @@ function createUiOperation(title) {
       if (activeUiOperation !== operation) throw new Error('Operation ownership changed');
       operation.message = nextTitle; syncUiOperation();
       // Yield a real frame, not merely another microtask on the blocked thread.
-      await new Promise((resolve) => {
-        const fallback = setTimeout(resolve, 50);
-        requestAnimationFrame(() => { clearTimeout(fallback); setTimeout(resolve, 0); });
-      });
+      await nextUiPaint();
     },
     close() {
       if (activeUiOperation !== operation) return;
@@ -336,8 +340,12 @@ let uiTooltipTouchTarget = null;
 let uiTooltipTouchAt = 0;
 let uiTooltipClickTarget = null;
 let uiTooltipClickAt = 0;
+const UI_TOOLTIP_DELAY_MS = 700;
+const uiTooltipActions = new WeakMap();
+let uiTooltipTimer = 0;
+let uiTooltipPendingTarget = null;
 
-function bindUiTooltipContent(target, { title = '', emphasis = '', body = '', key = '' } = {}) {
+function bindUiTooltipContent(target, { title = '', emphasis = '', body = '', key = '', action = null } = {}) {
   if (!target) return target;
   const rows = [
     ['uiTooltipTitle', title],
@@ -355,6 +363,8 @@ function bindUiTooltipContent(target, { title = '', emphasis = '', body = '', ke
   else delete target.dataset.uiTooltipKey;
   if (described) target.setAttribute('aria-describedby', 'uiTooltip');
   else target.removeAttribute('aria-describedby');
+  if (typeof action?.onClick === 'function') uiTooltipActions.set(target, action);
+  else uiTooltipActions.delete(target);
   return target;
 }
 
@@ -413,6 +423,7 @@ function positionUiTooltip(target, event = null) {
   const boundary = uiTooltipBoundary(target);
   const gap = 9;
   const margin = 8;
+  const contentMaxWidth = Math.max(1, Math.floor(viewport.width / 2));
   const anchor = uiTooltipAvoidanceTarget(target).getBoundingClientRect();
 
   const actionbar = $('actionbar');
@@ -429,30 +440,37 @@ function positionUiTooltip(target, event = null) {
     avoidRects,
     margin,
     gap,
-    maxWidth: 400,
+    maxWidth: contentMaxWidth,
     preferredHeight: layerSize.height,
     minHeight: 1,
     placements: ['below', 'above', 'right', 'left'],
     align: 'start',
   });
   const measureLayer = () => {
-    const rect = uiTooltip.getBoundingClientRect();
     return {
-      width: Math.min(400, Math.max(rect.width || 0, uiTooltip.scrollWidth || 0, 1)),
-      height: Math.min(360, Math.max(rect.height || 0, uiTooltip.scrollHeight || 0, 1)),
+      // Retain intrinsic width until the single-line fit decision. Clamping
+      // here would disguise overflowing text as a successfully fitted box.
+      // offset dimensions are not scaled by the entrance animation. Include
+      // borders in scroll height, otherwise every short message gains a bar.
+      // offsetWidth rounds fractional intrinsic widths down for some fonts.
+      // Read the untransformed CSS box, not the entrance-animation rectangle.
+      width: Math.ceil(Math.max(parseFloat(getComputedStyle(uiTooltip).width) || 0,
+        uiTooltip.offsetWidth, uiTooltip.scrollWidth, 1)),
+      height: Math.ceil(Math.max(parseFloat(getComputedStyle(uiTooltip).height) || 0, uiTooltip.offsetHeight,
+        uiTooltip.scrollHeight + uiTooltip.offsetHeight - uiTooltip.clientHeight, 1)),
     };
   };
   const compactCandidate = uiTooltip.dataset.tooltipSingleLine === 'true';
   // A tooltip may be retargeted while already visible. Clear the previous
   // geometry before measuring so a new message receives its natural width.
   uiTooltip.style.removeProperty('width');
-  uiTooltip.style.removeProperty('max-width');
+  uiTooltip.style.maxWidth = `${contentMaxWidth}px`;
   uiTooltip.style.removeProperty('max-height');
   uiTooltip.classList.toggle('is-single-line', compactCandidate);
   const apply = (geometry) => {
     uiTooltip.style.width = `${Math.max(1, Math.round(geometry.width))}px`;
     uiTooltip.style.maxWidth = `${Math.max(1, Math.round(geometry.maxWidth))}px`;
-    uiTooltip.style.maxHeight = `${Math.max(1, Math.round(geometry.maxHeight))}px`;
+    uiTooltip.style.maxHeight = `${Math.max(1, Math.round(Math.min(geometry.height, geometry.maxHeight)))}px`;
     uiTooltip.style.left = `${Math.round(geometry.left)}px`;
     uiTooltip.style.top = `${Math.round(geometry.top)}px`;
     uiTooltip.dataset.placement = geometry.placement;
@@ -475,23 +493,35 @@ function positionUiTooltip(target, event = null) {
   // Width/max-height can change an auto-sized tooltip after the first pass.
   // Re-read the rendered box once and recompute if it grew into an avoided
   // region; this keeps the contract valid without a viewport-specific guess.
-  const rendered = uiTooltip.getBoundingClientRect();
-  if (rendered.width > geometry.width + 1 || rendered.height > geometry.height + 1 || overlapsAvoid(rendered)) {
-    const retry = calculate({
-      width: Math.min(400, Math.max(rendered.width, uiTooltip.scrollWidth || 0, 1)),
-      height: Math.min(360, Math.max(rendered.height, uiTooltip.scrollHeight || 0, 1)),
-    });
+  const rendered = measureLayer();
+  if (rendered.width > geometry.width + 1 || rendered.height > geometry.height + 1 || overlapsAvoid(uiTooltip.getBoundingClientRect())) {
+    const retry = calculate(rendered);
     geometry = retry;
     apply(geometry);
   }
 }
 function showUiTooltip(target, { title = '', emphasis = '', body = '', event = null, pinned = false } = {}) {
   if (!uiTooltip || !target || (!title && !emphasis && !body)) return;
+  cancelPendingUiTooltip();
   uiTooltipTarget = target;
   uiTooltipPinned = Boolean(pinned);
   uiTooltip.classList.toggle('is-pinned', uiTooltipPinned);
   uiTooltip.dataset.tooltipSingleLine = String(tooltipCanStartSingleLine({ title, emphasis, body }));
   renderUiTooltip({ title, emphasis, body });
+  let actions = $('uiTooltipActions');
+  if (!actions) {
+    actions = document.createElement('div'); actions.id = 'uiTooltipActions';
+    actions.className = 'ui-tooltip-actions'; uiTooltip.appendChild(actions);
+  }
+  actions.replaceChildren();
+  const action = pinned && uiTooltipActions.get(target);
+  actions.hidden = !action;
+  if (action) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'btn'; button.textContent = action.label;
+    button.onclick = () => { hideUiTooltip(true); action.onClick(); };
+    actions.appendChild(button);
+  }
   uiTooltip.hidden = false;
   positionUiTooltip(target, event);
 }
@@ -506,6 +536,7 @@ function showDatasetTooltip(target, event = null, pinned = false) {
   });
 }
 function hideUiTooltip(force = false) {
+  cancelPendingUiTooltip();
   if (!uiTooltip || (!force && uiTooltipPinned)) return;
   uiTooltip.hidden = true;
   uiTooltipTarget = null;
@@ -521,20 +552,37 @@ function hideUiTooltip(force = false) {
   uiTooltip.style.removeProperty('max-height');
   delete uiTooltip.dataset.placement;
 }
+function dismissUiTooltipsWithin(owner, force = false) {
+  if (owner && [uiTooltipTarget, uiTooltipPendingTarget].some((target) => target && owner.contains(target))) {
+    hideUiTooltip(force);
+  }
+}
+function cancelPendingUiTooltip() {
+  clearTimeout(uiTooltipTimer); uiTooltipTimer = 0; uiTooltipPendingTarget = null;
+}
+function queueDatasetTooltip(target) {
+  const identity = uiTooltipIdentity(target);
+  if (identity === uiTooltipIdentity(uiTooltipPendingTarget)) return;
+  if (!uiTooltip.hidden && identity === uiTooltipIdentity(uiTooltipTarget) &&
+      ['Title', 'Emphasis', 'Body'].every((part) =>
+        $('uiTooltip' + part).textContent === (target.dataset['uiTooltip' + part] || ''))) return;
+  hideUiTooltip();
+  uiTooltipPendingTarget = target;
+  uiTooltipTimer = setTimeout(() => {
+    const connected = connectedUiTooltipTarget(uiTooltipPendingTarget);
+    cancelPendingUiTooltip();
+    if (connected && !uiTooltipPinned) showDatasetTooltip(connected);
+  }, UI_TOOLTIP_DELAY_MS);
+}
 document.addEventListener('pointerover', (event) => {
   const target = event.target.closest?.(UI_TOOLTIP_SELECTOR);
   if (!target || uiTooltipPinned || matchMedia('(hover: none)').matches) return;
-  showDatasetTooltip(target, event);
-});
-document.addEventListener('pointermove', (event) => {
-  if (!uiTooltipTarget || uiTooltipPinned || uiTooltip.hidden) return;
-  const target = event.target.closest?.(UI_TOOLTIP_SELECTOR);
-  if (target === uiTooltipTarget) positionUiTooltip(target, event);
+  queueDatasetTooltip(target);
 });
 document.addEventListener('pointerout', (event) => {
   const target = event.target.closest?.(UI_TOOLTIP_SELECTOR);
   if (!target || uiTooltipPinned) return;
-  if (!event.relatedTarget?.closest?.(UI_TOOLTIP_SELECTOR) || event.relatedTarget.closest(UI_TOOLTIP_SELECTOR) !== target) {
+  if (uiTooltipIdentity(event.relatedTarget?.closest?.(UI_TOOLTIP_SELECTOR)) !== uiTooltipIdentity(target)) {
     hideUiTooltip();
   }
 });
@@ -553,7 +601,7 @@ document.addEventListener('click', (event) => {
     return;
   }
   const target = event.target.closest?.(UI_TOOLTIP_SELECTOR);
-  if (target) {
+  if (target && !target.closest('.plugin')) {
     const identity = uiTooltipIdentity(target);
     const now = performance.now();
     const repeated = uiTooltipClickTarget === identity && now - uiTooltipClickAt <= 500;
@@ -573,15 +621,23 @@ document.addEventListener('click', (event) => {
 });
 document.addEventListener('dblclick', (event) => {
   const target = event.target.closest?.(UI_TOOLTIP_SELECTOR);
-  if (!target) return;
+  if (!target || target.closest('.plugin')) return;
   event.preventDefault();
   event.stopPropagation();
   showDatasetTooltip(target, event, true);
 }, true);
+document.addEventListener('contextmenu', (event) => {
+  // Keep the browser's normal copy menu inside an already pinned tooltip.
+  if (uiTooltip?.contains(event.target)) return;
+  const target = event.target.closest?.(UI_TOOLTIP_SELECTOR);
+  if (!target) return;
+  event.preventDefault();
+  showDatasetTooltip(target, event, true);
+});
 document.addEventListener('pointerup', (event) => {
   if (event.pointerType !== 'touch') return;
   const target = event.target.closest?.(UI_TOOLTIP_SELECTOR);
-  if (!target) return;
+  if (!target || target.closest('.plugin')) return;
   const now = performance.now();
   const identity = uiTooltipIdentity(target);
   const repeated = uiTooltipTouchTarget === identity && now - uiTooltipTouchAt <= 500;
@@ -597,7 +653,11 @@ document.addEventListener('pointerup', (event) => {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') { hideUiTooltip(true); closeModal(); }
 });
-window.addEventListener('scroll', () => {
+window.addEventListener('scroll', (event) => {
+  // Wrapping/max-height changes and user scrolling inside the tooltip do not
+  // move its anchor. Ignore the layer's own scroll events in this capture
+  // listener; otherwise measuring a long message can immediately hide it.
+  if (event.target === uiTooltip || uiTooltip?.contains(event.target)) return;
   if (uiTooltipPinned && uiTooltipTarget?.isConnected) positionUiTooltip(uiTooltipTarget);
   else hideUiTooltip();
 }, { passive: true, capture: true });
@@ -816,7 +876,7 @@ $('modalClose').addEventListener('click', closeModal);
 $('modal').addEventListener('click', (e) => { if (e.target === $('modal')) closeModal(); });
 $('modal').addEventListener('keydown', (e) => {
   if (e.key !== 'Tab') return;
-  const els = [...$('modal').querySelectorAll('button, a[href], input, textarea, select')].filter((el) => !el.disabled && el.offsetParent !== null);
+  const els = [...$('modal').querySelectorAll('button, a[href], input, textarea, select, summary')].filter((el) => !el.disabled && el.offsetParent !== null);
   if (!els.length) return;
   const first = els[0], last = els[els.length - 1];
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }

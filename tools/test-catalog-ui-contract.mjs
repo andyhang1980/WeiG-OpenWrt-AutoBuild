@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 import { readFrontendRuntimeSource } from './lib/frontend-source.mjs';
 import {
   catalogFileNameTokenMatch,
@@ -30,6 +31,39 @@ const i18nEnglish = JSON.parse(readFileSync(join(root, 'site', 'wrt', 'data', 'i
 const i18nZhCn = JSON.parse(readFileSync(join(root, 'site', 'wrt', 'data', 'i18n', 'zh-CN.json'), 'utf8'));
 const i18nZhTw = JSON.parse(readFileSync(join(root, 'site', 'wrt', 'data', 'i18n', 'zh-TW.json'), 'utf8'));
 const expect = (condition, message) => { if (!condition) throw new Error(message); };
+const branchPreferenceSource = app.match(/function catalogBranchPreference\([^]*?\n\}/)?.[0];
+const branchControl = { dataset: { catalogSourceId: 'previous-source' }, value: '25.12' };
+const branchContext = { $: () => branchControl, state: { device: { id: 'catalog-target' }, source: { id: 'previous-source' }, version: { id: '25.12' } } };
+vm.createContext(branchContext); vm.runInContext(branchPreferenceSource, branchContext);
+const newSource = { id: 'new-source', defaultBranch: 'vendor-24.10', branches: [
+  { id: '25.12', branch: 'vendor-25.12' }, { id: '24.10', branch: 'vendor-24.10' },
+] };
+expect(branchContext.catalogBranchPreference(newSource, false) === '24.10',
+  'entering a new source must not borrow the previous source branch ID');
+branchControl.dataset.catalogSourceId = newSource.id;
+expect(branchContext.catalogBranchPreference(newSource, false) === '25.12',
+  'choosing another version must not be reset to upstream default on every render');
+expect(branchContext.catalogBranchPreference(newSource, false, { branchId: '24.10' }) === '24.10',
+  'explicit imported branch selection must take priority');
+const nativeBaselineSource = app.match(/async function ensureCatalogProfileBaselines\([^]*?\n\}/)?.[0];
+let finishBaselineA;
+const sourceA = { id: 'source' }, nativeBranch = { branch: 'stable', commit: 'a', assets: { profileBaselines: { asset: 'profiles' } } };
+const baselineContext = {
+  MENU_INDEX: { assetRef: 'revision' }, PROFILE_BASELINE_STORE: null, profileBaselineKey: '',
+  catalogProfileBaselineLoadingPromise: null, menuCatalogSeq: 1,
+  catalogShardLoader: () => new Promise(resolve => { finishBaselineA = resolve; }),
+  ensureProfileBaselineModule: async () => ({ createProfileBaselineStore: document => document }),
+};
+vm.createContext(baselineContext); vm.runInContext(nativeBaselineSource, baselineContext);
+const baselineA = baselineContext.ensureCatalogProfileBaselines(sourceA, nativeBranch);
+await Promise.resolve();
+baselineContext.menuCatalogSeq = 2;
+baselineContext.catalogShardLoader = async () => ({ identity: 'new-generation' });
+await baselineContext.ensureCatalogProfileBaselines(sourceA, nativeBranch);
+finishBaselineA({ identity: 'old-generation' });
+await baselineA;
+expect(baselineContext.PROFILE_BASELINE_STORE.identity === 'new-generation',
+  'same-key reload must isolate pending Native baseline promises and reject an old completion');
 
 expect(html.includes("if (meta && !releaseMeta) throw new Error('Site release metadata does not match its release pointer')"),
   'an invalid deployment identity can silently fall back to the main Catalog channel');
@@ -256,7 +290,8 @@ expect(app.includes('const recommendationSteps = plans.recommended?.steps?.lengt
   app.includes("t('runtime.3a95242a9e37', { value1: recommendationTargetNames.join(' → ') })") &&
   app.includes("t('menu.automaticLinkage', {") &&
   app.includes('for (const step of recommendationActions) {') &&
-  app.includes('requiredTargets: recommendationTargets') &&
+  app.includes('requiredTargets: [...recommendationTargets, ...retainedTargets]') &&
+  app.includes('const retainedTargets = plans.recommended?.retainedTargets || []') &&
   app.includes('compatibilityTargetsResolved(requiredTargets)') &&
   app.includes('applyCatalogIntent(menuOptionBySymbol.get(step.symbol) || { symbol: step.symbol },') &&
   !app.includes('warning.records.find((item) => item.configSymbol === plans.recommended.symbol)'),
@@ -374,7 +409,7 @@ expect(html.includes('class="ui-tooltip" id="uiTooltip"') &&
   html.includes('id="uiTooltipTitle"') && html.includes('id="uiTooltipEmphasis"') &&
   html.includes('id="uiTooltipBody"') &&
   !html.includes('id="menuTooltip"') && !html.includes('id="popover"') &&
-  css.includes('.ui-tooltip{position:fixed;z-index:var(--z-tooltip);width:max-content;max-width:min(400px,calc(100vw - 24px))') &&
+  css.includes('.ui-tooltip{position:fixed;z-index:var(--z-tooltip);width:max-content;max-width:min(50vw,calc(100vw - 24px))') &&
   css.includes('.ui-tooltip-emphasis{') && css.includes('color:var(--danger)') &&
   !css.includes('.menu-tooltip{') && !css.includes('.popover {') &&
   sharedTooltipContract.includes("const UI_TOOLTIP_SELECTOR = '[data-ui-tooltip-title],[data-ui-tooltip-emphasis],[data-ui-tooltip-body]'") &&
@@ -388,14 +423,24 @@ expect(html.includes('class="ui-tooltip" id="uiTooltip"') &&
    sharedTooltipContract.includes('function uiTooltipAvoidanceTarget(target)') &&
    sharedTooltipContract.includes('uiTooltip.style.width =') &&
    sharedTooltipContract.includes('const measureLayer = () =>') &&
-   sharedTooltipContract.includes('if (rendered.width > geometry.width + 1 || rendered.height > geometry.height + 1 || overlapsAvoid(rendered))') &&
+   sharedTooltipContract.includes('uiTooltip.offsetHeight') &&
+   sharedTooltipContract.includes('const retry = calculate(rendered)') &&
    sharedTooltipContract.includes('uiTooltip.dataset.placement = geometry.placement') &&
   sharedTooltipContract.includes("uiTooltip.style.removeProperty('max-height');") &&
   sharedTooltipContract.includes("uiTooltip.classList.toggle('is-pinned', uiTooltipPinned)") &&
   sharedTooltipContract.includes("uiTooltip.classList.remove('is-pinned')") &&
   sharedTooltipContract.includes('function bindUiTooltipContent(target') &&
-  sharedTooltipContract.includes("document.addEventListener('pointermove'") &&
+  !sharedTooltipContract.includes("document.addEventListener('pointermove'") &&
+  sharedTooltipContract.includes('const UI_TOOLTIP_DELAY_MS = 700') &&
+  sharedTooltipContract.includes('function cancelPendingUiTooltip()') &&
+  sharedTooltipContract.includes('queueDatasetTooltip(target)') &&
+  sharedTooltipContract.includes('function dismissUiTooltipsWithin(owner, force = false)') &&
+  !app.includes('function hideMenuTooltip(') &&
+  app.includes("dismissUiTooltipsWithin($('menuconfigBody'))") &&
+  sharedTooltipContract.includes('pinned && uiTooltipActions.get(target)') &&
   sharedTooltipContract.includes("document.addEventListener('dblclick'") &&
+  sharedTooltipContract.includes("document.addEventListener('contextmenu'") &&
+  sharedTooltipContract.includes("if (!target || target.closest('.plugin')) return;") &&
   sharedTooltipContract.includes('showDatasetTooltip(target, event, true)') &&
   sharedTooltipContract.includes('function connectedUiTooltipTarget(target)') &&
   sharedTooltipContract.includes('now - uiTooltipClickAt <= 500') &&
@@ -409,14 +454,14 @@ expect(html.includes('class="ui-tooltip" id="uiTooltip"') &&
   css.includes(':is([data-ui-tooltip-title],[data-ui-tooltip-emphasis],[data-ui-tooltip-body]){touch-action:manipulation}') &&
   app.includes("bindUiTooltipContent($('menuconfigStateHelp'), { body: help })") &&
   app.includes('key: `CONFIG_${option.symbol}:${stateValue}`') &&
-  app.includes('if (value === stateValue) return;') &&
+  uiComponents.includes("button.getAttribute('aria-pressed') !== 'true'") &&
   (app.match(/\.title\s*=/g) || []).length === 1 &&
   !html.includes(' title="') &&
   !pageShell.includes('.title =') &&
   !uiComponents.includes('.title =') &&
   !packageProbeV3.includes('.title =') &&
   !app.includes('function showMenuPopup(') && !app.includes('function showPopover('),
-  'shared pointer-following tooltip template or content-bound positioning regressed');
+  'shared delayed anchor tooltip template or content-bound positioning regressed');
 expect(app.includes("dataset.uiTooltipTitle = 'D · Defconfig'") &&
   app.includes("const defconfigEmphasis = t('runtime.f891591b9e6d')") &&
   app.includes("const defconfigHelp = t('runtime.095a4944190f')") &&
@@ -427,13 +472,17 @@ expect(app.includes("dataset.uiTooltipTitle = 'D · Defconfig'") &&
   app.includes("removeAttribute('title')"),
   'Defconfig compact warning or shared tooltip binding regressed');
 expect(pluginRenderContract.includes('const applyChecked = (checked) => {') &&
-  pluginRenderContract.includes('bindUiTooltipContent(item, { title: pName(p), body: tooltipBody })') &&
-  pluginRenderContract.includes('bindUiTooltipContent(nameBtn, { title: pName(p), body: tooltipBody })') &&
+  pluginRenderContract.includes('bindUiTooltipContent(item, tooltip)') &&
+  pluginRenderContract.includes('bindUiTooltipContent(nameBtn, tooltip)') &&
   !pluginRenderContract.includes("item.addEventListener('dblclick'") &&
   !pluginRenderContract.includes('if (curatedPluginChecked(p, st, catalogOption) && cb.checked) return;') &&
   !pluginRenderContract.includes('applyChecked(true);') &&
-  !pluginRenderContract.includes('nameBtn.title = detail'),
-  'plugin card selection or shared double-click tooltip binding regressed');
+  !pluginRenderContract.includes('nameBtn.title = detail') &&
+  pluginRenderContract.includes("item.addEventListener('click'") &&
+  !pluginRenderContract.includes('plugin-dependency-toggle') &&
+  pluginRenderContract.includes('onClick: () => openCatalogDependencyDetails(catalogOption)') &&
+  pluginRenderContract.includes('applyChecked(!cb.checked)'),
+  'plugin card selection or shared right-click tooltip binding regressed');
 const originSlotContract = app.match(/function renderCatalogOriginSlot\(option, origin\) \{[\s\S]*?\n\}/)?.[0] || '';
 expect(app.includes("kind: 'user', label: t('runtime.3a8e2a20d9e6')") &&
   app.includes("kind: 'user-exclude', label: t('runtime.97312fbcf425')") &&
@@ -617,23 +666,35 @@ expect(!app.includes('function resolvePackageSelectionOption(') &&
   'package selection must not reverse-map a dependency to a luci-app package');
 const setMenuValueContract = app.match(/function setMenuValue\(option, value, openChildren = false\) \{[\s\S]*?\n\}/)?.[0] || '';
 expect(setMenuValueContract.includes('applyMenuValue(option, value, false)') &&
-  setMenuValueContract.includes('openCatalogConflictModal(option, value, violations, false)') &&
+  setMenuValueContract.includes('openCatalogDependencyDetails(option, { error })') &&
   !setMenuValueContract.includes('resolvePackageSelectionOption') &&
   setMenuValueContract.includes('const renderedValue = menuValues.get(option.symbol)') &&
   setMenuValueContract.includes("renderCatalogUiAfterIntent(openChildren && renderedValue !== 'n', option, renderedValue)"),
   'Advanced menuconfig must apply the clicked Kconfig symbol directly and keep dependency direction native');
+expect(app.includes("validationOptions: { ...context.validationOptions, scope: 'menuconfig' }") &&
+  app.includes('skipPrerequisitePlanning: true') &&
+  !app.includes('scheduleCompatibilitySelectionHint') && !app.includes('openKconfigPrerequisiteModal') &&
+  !app.includes('openCatalogConflictModal') &&
+  !setMenuValueContract.includes('loadCompatibilityEvaluation') &&
+  app.includes('function catalogDependencyAnalysis(option)') &&
+  pluginRenderContract.includes('onClick: () => openCatalogDependencyDetails(catalogOption)') &&
+  app.includes("renderGroups({ incremental: true })") &&
+  css.includes('.catalog-dependency-details{') && css.includes('max-height:60dvh') &&
+  css.includes('overflow-x:hidden'),
+  'native card selection must stay separate from explicit, bounded inline dependency recommendations and compatibility checks');
 const renderMenuOptionContract = app.match(/function renderMenuOption\(option\) \{[\s\S]*?\n\}\nfunction renderMenuLeaf/)?.[0] || '';
 const hiddenDerivedContract = app.match(/function hiddenDerivedOptionActive\(option\) \{[\s\S]*?\n\}/)?.[0] || '';
 const importedDefaultContract = app.match(/function reconcileImportedConditionalDefaults\(options = \{\}\) \{[\s\S]*?\n\}/)?.[0] || '';
 expect(app.includes('function optionStateConstraints(option)') &&
-  (app.match(/CATALOG_ENGINE\.kconfigStateConstraints/g) || []).length >= 3 &&
-  renderMenuOptionContract.includes("for (const stateValue of ['n', 'm', 'y'])") &&
+  (app.match(/CATALOG_ENGINE\.kconfigStateConstraints/g) || []).length >= 2 &&
+  uiComponents.includes("for (const stateValue of ['n', 'm', 'y'])") &&
   renderMenuOptionContract.includes('actions.appendChild(renderCatalogOriginSlot(option, origin))') &&
   renderMenuOptionContract.indexOf('actions.appendChild(renderCatalogOriginSlot(option, origin))') <
-    renderMenuOptionContract.indexOf("for (const stateValue of ['n', 'm', 'y'])") &&
-  renderMenuOptionContract.includes("spacer.className = 'kconfig-state-spacer'") &&
-  app.includes("button.setAttribute('aria-disabled', String(!stateConstraint.selectable))") &&
-  app.includes('showDatasetTooltip(button, event)') &&
+    renderMenuOptionContract.indexOf('UI_COMPONENTS.createUiKconfigStateControl') &&
+  renderMenuOptionContract.includes('UI_COMPONENTS.createUiKconfigStateControl') &&
+  uiComponents.includes("spacer.className = 'kconfig-state-spacer'") &&
+  uiComponents.includes("button.setAttribute('aria-disabled', String(!state?.selectable))") &&
+  app.includes('onUnavailable: showDatasetTooltip') &&
   app.includes('function kconfigConstraintTooltip(option, stateValue, constraints)') &&
   css.includes('.menuconfig-origin-slot{display:flex;flex:none;width:72px') &&
   !css.includes('.menuconfig-restore-slot{') && !css.includes('.menuconfig-restore-default{') &&
@@ -793,13 +854,13 @@ expect(intentContract.includes('catalogUserOverrides.has(option.symbol)') &&
   intentContract.includes("? 'excluded' : 'selected'") &&
   intentContract.includes("return state.sel.has(plugin.id) ? 'selected' : 'none'"),
   'Catalog and legacy curated intent authorities are not explicit');
-const intentApplyContract = app.match(/function applyCatalogIntent\(option, value, force = false, source = 'user'\) \{([\s\S]*?)\n\}/)?.[1] || '';
+const intentApplyContract = app.match(/function applyCatalogIntent\(option, value, force = false, source = 'user', assignments = null\) \{([\s\S]*?)\n\}/)?.[1] || '';
 const explicitIntentContract = app.match(/function recordCatalogExplicitIntent\(option, value\) \{([\s\S]*?)\n\}/)?.[1] || '';
 expect(explicitIntentContract.includes('resolveCatalogUserOverride(catalogInheritedValue(option.symbol), value)') &&
   explicitIntentContract.includes('catalogUserOverrides.delete(option.symbol)') &&
   explicitIntentContract.includes("return 'restore'") &&
   intentApplyContract.includes('recordCatalogExplicitIntent(changedOption || option, change.to)') &&
-  intentApplyContract.includes('!result.changes.some((change) => change.symbol === option.symbol)'),
+  intentApplyContract.includes('!result.changes.some((change) => change.symbol === directSymbol)'),
   'returning to an inherited Catalog value leaves a zombie explicit override');
 const groupBadgeContract = app.match(/function updateGroupBadges\(\) \{([\s\S]*?)\n\}/)?.[1] || '';
 const statsContract = app.match(/function updateStats\(\) \{([\s\S]*?)\n\}/)?.[1] || '';
@@ -830,7 +891,9 @@ expect(restoreContract.includes('catalogStateRevision = snapshot.revision') &&
 expect(app.includes('function restoreMap(target, source)') &&
   app.includes('function restoreSet(target, source)'),
   'atomic rollback collection restorers are missing');
-expect((app.match(/restoreCatalogUiState\(snapshot\);/g) || []).length === 6,
+// The retired ordinary conflict modal no longer owns a transaction. Inline
+// assistance delegates to applyCatalogIntent's tested atomic rollback.
+expect((app.match(/restoreCatalogUiState\(snapshot\);/g) || []).length === 5,
   'not every atomic rollback path shares the clean restore contract');
 expect((app.match(/reconcileCatalogReadyState\(\)/g) || []).length >= 3,
   'menu/applications arrival paths do not share ready reconciliation');
@@ -911,6 +974,23 @@ expect(mirrorLoader.includes('if (!packageMirrorsPromise)') &&
   'package mirror loading does not share one promise/cache loader');
 
 const mirrorIds = ['anonymous-upstream', 'anonymous-automatic', 'anonymous-manual'];
+const mirrorContext = vm.createContext({ state: {}, PACKAGE_MIRRORS: JSON.parse(readFileSync(
+  join(root, 'site/wrt/data/package-mirrors.json'), 'utf8')) });
+for (const name of ['mirrorPreset', 'packageMirrorAvailable']) {
+  const definition = app.match(new RegExp(`function ${name}\\([^]*?\\n\\}`))?.[0];
+  expect(Boolean(definition), `${name} function missing`);
+  vm.runInContext(definition, mirrorContext);
+}
+for (const source of ['OpenWrt', 'ImmortalWrt', 'lede', 'hanwckf', 'iStoreOS', 'Lienol', 'future-source']) {
+  expect(mirrorContext.packageMirrorAvailable('source-default', source) &&
+    mirrorContext.packageMirrorAvailable('official', source), `default mirror must be available for ${source}`);
+}
+expect(!mirrorContext.packageMirrorAvailable('ustc', 'future-source'),
+  'unknown source must not advertise a guessed manual mirror');
+expect(app.indexOf("const mb = document.createDocumentFragment();") <
+  app.indexOf("$('modalBody').replaceChildren(mb);"), 'submit must construct content before showing it');
+expect(app.includes("['ntp', Boolean($('ntpBox')?.selectedOptions?.[0]?.value)]") &&
+  app.includes("['package-mirror', Boolean("), 'submit readiness must cover all firmware dropdowns');
 const mirrorSelection = (overrides = {}) => resolvePackageMirrorSelection({
   timezone: 'Region/Local',
   availableIds: mirrorIds,
@@ -997,6 +1077,12 @@ expect(
   'plugin option cards lost their independent rounded boundary template');
 
 console.log('Catalog UI state and responsive DOM contracts passed');
+expect(app.includes('includeProfileBaselines: true') && app.includes('MENU_CATALOG = { ...core.data, coreOnly: true }') &&
+  app.includes('await nextUiPaint()') && app.includes('MENU_CATALOG.coreOnly'),
+  'verified core selectors must paint before the runtime and may not masquerade as a ready model');
+expect(app.includes('const shardLoader = catalogShardLoader') && app.includes('generation === menuCatalogSeq') &&
+  app.includes('shardLoader === catalogShardLoader'),
+  'Native baseline completion must use its captured loader and reject stale generations');
 
 expect(!app.includes('probe-request.json'), 'removed Probe request file protocol returned');
 expect(app.includes('WEIG_PACKAGE_PROBE_STATE_V2:') &&

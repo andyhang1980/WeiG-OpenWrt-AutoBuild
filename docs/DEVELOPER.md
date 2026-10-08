@@ -1,5 +1,12 @@
 # 开发者指南
 
+## 版本族、选择器加载与数量提示
+
+- Source/Branch 事实由 Catalog 配置与发现模块维护；`versionFamily` 描述前缀、数字段数和宽度，排除补丁/实验分支。数值倒序使用分支 `version`，默认选择独立使用上游 `defaultBranch`，网页不按 Source 名称特判。
+- 先验证 index/core 并建立 Target/Profile，渲染选择器且保持加载提示；再并行获取同一 immutable manifest 的 graph 与 Native Profile baseline。运行数据未就绪时 Target 编辑与提交不可用，Source/Branch 可切换并取消旧任务。共享加载器复用已验证 core 和 shard Promise；取消信号互相隔离，旧响应不得覆盖新模型或 baseline。
+- `ui.applicationCountAdvisory` 是非阻断体验策略：相对原生 baseline 新增、用户显式选择或导入且最终为 Y 的真实应用去重统计，默认 7–10 黄、11 以上红；不计内置、M、自动依赖，不当作大小估计，不自动改 RootFS。完整安装大小可用时，原有 50%/80% 容量建议独立保留；历史导入与旧 site config 兼容。
+- 新源必须完成 Catalog 原生生成、exact feeds/Profile 和关系校验，才能晋级并绑定网页。增加 Source 不增加 Worker 门禁或另一套 Kconfig 算法；本地测试通过不等于任意固件编译成功。
+
 ## 推荐身份、官方大小观测与提交布局
 
 - 等价兼容性候选去重保留全部 `resolvedPackages`，避免首选取消身份丢失；共享 `deriveCompatibilityPlans` / `applyUserIntent` 模拟、应用、复验所有动作，不硬编码包名。
@@ -24,11 +31,13 @@
 - 回归覆盖精确 feeds、缺失/非法凭据、推荐→再次自检→实际导出与原生图读取。浏览器和 CI 通过
   不代表全部上游组合或固件均编译成功。
 
-## 原生构建闭包的类型边界
+## Worker 执行与离线诊断边界
+
+Catalog 提供原生事实，网页负责依赖／兼容性检查、推荐与用户强制继续；固件 Worker 只获取锁定输入、重建配置并执行。Worker 不再调用 `verify-build-closure.mjs`，不额外运行 `prepare-tmpinfo` 做构建前审查；保留请求执行安全、输入身份和显式覆盖保真。原生元数据仅在上游构建已生成后收集为失败证据。详见 [运行配置契约](RUNTIME-CONFIG-CONTRACT.md)。
 
 - 复用共享 Kconfig 解析/求值器。请求解析器从已验证图生成任务内 `conditionContext`，随现有快照绑定的符号凭据传递。已知 bool/tristate 省略值按 N；未知符号、缺失 scalar 和非法表达式仍待定。不为通过检查改 `.config` 或隐式运行 Defconfig。
 - 原生源码编译目标、实体包、真实 `Provides` 分开。`Source-Makefile` 归属不是虚拟提供者；`Build-Depends` 到达源码编译目标，不要求安装任一产物包。host-only 不等于 target 安装，未支持的构建类型明确诊断，不能去掉后缀假装 target。
-- `tools/lib/native-make-graph.mjs` 消费已经生成的 `tmp/.packagedeps` 赋值，由 GNU Make 在隔离、无构建配方的输入中展开条件，不加载构建 Makefile。旧的独立推测编译图已移除。上游先过滤同源码提供者，再统计候选；多个剩余提供者使用条件边，全部未启用就没有边；单一提供者即使未安装仍可能编译。保留已选/默认变体和 host 类型目标，原生图/源码证据缺失仍待定，故障包真实可达仍有路径并阻断。
+- 离线诊断使用 `tools/lib/native-make-graph.mjs` 消费已经生成的 `tmp/.packagedeps` 赋值，由 GNU Make 在隔离、无构建配方的输入中展开条件，不加载构建 Makefile。旧的独立推测编译图已移除。上游先过滤同源码提供者，再统计候选；多个剩余提供者使用条件边，全部未启用就没有边；单一提供者即使未安装仍可能编译。保留已选/默认变体和 host 类型目标；缺少证据保持待定，故障包真实可达只输出诊断路径，不参与 Worker 构建准入。
 - `package-info.txt.gz` 和 `package-deps.mk.gz` 保存原生输入。报告记录输入哈希、展开后的根、类型化节点和变体，并绑定精确请求身份。离线 CLI 支持 `--package-info`、`--package-deps` 和可选 `--make`，需要 GNU Make。本地回归可用 `WEIG_MAKE` 指定不在 PATH 或名称不同的可执行程序。适配器不执行构建配方、Defconfig、下载或编译。
 - 历史报告没有原生元数据时，只能验证条件求值等可重放部分，不能宣称完整图重放。契约测试、Pages 部署、浏览器成功不等于固件编译成功。
 
@@ -44,8 +53,8 @@
 - `bool`/`tristate` 保留合法 N/M/Y 控件；`int`/`hex`/`string` 编辑、依赖失效与推荐统一经过共享引擎的类型、范围、可见性和依赖约束。已存在的零、空字符串和字面量 `n` 都不等于缺失赋值；非零依赖上限允许 scalar，UNKNOWN 保持待定。
 - 已确认依赖关闭的 scalar 可以推荐移除，不为保留容量值重新开启父项、切换 Target/Profile 或镜像格式。活动项的非法值仅在模拟减少阻断且不新增问题时推荐当前适用的类型化默认值。应用复用同一引擎，失败回滚；scalar 不显示 N/M/Y。
 - Schema 6 的 override 值新增允许 `null`：`["SYMBOL", null]` 表示从 Native Profile 基线移除该赋值，与 `"n"`、`"0"` 和序列化空字符串不同。导入、重建及有效配置校验保持这个区别，身份保护和未知符号检查不变。旧字符串值请求继续兼容；新增 null 请求需要匹配的新 Worker，不能宣称旧消费者已支持。
-- 现有 compatibility 契约中的 `buildDependency` 是可选扩展。普通 build-failure 规则复用浏览器匹配器判断选择和精确环境；声明该字段的规则另走刷新的原生包图。非法规则、活动可达路径不确定仍停止，不静默改写配置。
-- 回归覆盖匿名类型/范围/零/空/UNKNOWN、真实 Worker CLI 基线删除、普通规则 Browser/Worker 一致性及推荐→第二次检→导出→重导入。网页和契约检查成功不等于固件编译通过，也不等于穷尽原生 `conf` 等价性。
+- 现有 compatibility 契约中的 `buildDependency` 是可选扩展。网页依据精确环境和当前原生包图动态推导触发者；证据不完整时不得伪造唯一推荐。Worker 不读取这些规则审查软件选择，也不静默改写配置。
+- 回归覆盖匿名类型/范围/零/空/UNKNOWN、真实 Worker CLI 基线删除、离线规则诊断及推荐→第二次检→导出→重导入。网页和契约检查成功不等于固件编译通过，也不等于穷尽原生 `conf` 等价性。
 
 ## 推荐执行与导出一致性
 
@@ -91,6 +100,16 @@ node tools/prepare-web-deployment.mjs --commit <40位SHA> --branch <dev或main>
 6. 每次修改 AutoBuild 必须最后运行 `prepare`，同步 Asia/Shanghai `VERSION` 与 `site-version.json`。
 
 ## 2. 数据加载
+
+### 固件设置与提交
+
+`source-default` 是所有有效 Catalog Source 的安全镜像选项；其他预设只向策略已声明且具有对应 roots 的源开放。新源没有镜像 family 时不猜测仓库，保留源码及自定义 `VERSION_REPO`。网页与请求 parser 消费同一个镜像策略及其生成投影。
+
+提交前检查主题、NTP、镜像选择器；先完整构造摘要和三行操作，再显示弹窗。请求下载沿用现有 schema 6 / Native baseline+overrides；下载完成后打开对应 GitHub 编辑器，弹窗被阻挡时沿用当前页跳转；异步失败显示错误，不创建空白标签页或 Issue。
+
+所有 P2 源适配器复用 `Shell/diy2-generic.sh`，只生成 `zzzz-weig-system` UCI 覆盖，在已审计的原生 numeric/zzz defaults 后应用 LAN、时区、NTP。只改 LAN ipaddr，保留接口、协议、掩码和 IPv6；不再修改主题 Makefile 或 `config_generate`。可选 `firmware.themeMode=inherit` 保留原生运行时主题，`explicit` 应用选定主题；旧 JSON 无该字段沿用显式主题语义。prompt 策略下空密码不改原生密码，UI 未知默认不等同无密码。
+
+专项集成检查：`node tools/test-submit-browser.mjs`，复用现有 CDP 驱动，使用真实 Catalog 和本地预览，实际下载 JSON/.config、重新导入、打开对应 GitHub 编辑器并由真实 parser 校验请求。需要网络和 Chrome，不发布 Issue，不触发云编译；证据路径由脚本输出。
 
 `site/wrt/config/site.json` 是公开网页配置源；其中 `catalog.loading` 是既有加载调度 contract。`config/build.json` 是构建端配置源，浏览器不得读取：
 
@@ -236,7 +255,7 @@ Catalog 运行数据变化时，先验证并发布该快照，再推 AutoBuild�
 
 ## 10. Catalog 选择与最终配置
 
-Prompt/menu 可见性约束交互编辑，不代表隐藏的原生默认值非法；缺失的 scalar 不作为已启用配置项检查。Worker 重建保留 Native Profile baseline，只核对显式覆盖，不得对整份 baseline 套用交互校验；独立的上游构建闭包检查仍生效。浏览器测试必须等待 Catalog baseline 和字体就绪后再测浮层，不能把页面外壳已显示当作加载完成。
+Prompt/menu 可见性约束交互编辑，不代表隐藏的原生默认值非法；缺失的 scalar 不作为已启用配置项检查。Worker 重建保留 Native Profile baseline，只核对显式覆盖，不对整份 baseline 套用交互校验或构建闭包审查。浏览器测试必须等待 Catalog baseline 和字体就绪后再测浮层，不能把页面外壳已显示当作加载完成。
 
 跨 parser/runtime 修改时执行
 `node tools/test-catalog-producer-contract.mjs --producer-root <Catalog-checkout>`。
@@ -271,6 +290,6 @@ Advanced 标题按钮、程序定位和搜索框共用一个异步展开协调�
 
 通道发布清单携带 `assetRef` 和代码来源；不可变资产清单只保存数据契约，不内嵌自身 Git SHA。Catalog 的完整生成、根资产更新和翻译发布必须先清除继承的发布字段，再提交资产、重签通道并校验两份清单。晋级保持同一 assetRef，不能只验证提交存在。
 
-Worker 按构建请求中的不可变 revision 读取 index 和 compatibility。历史及新生成的无发布身份清单均可读取；显式 assetRef 冲突、源码提交不一致或压缩资产哈希错误仍须拒绝。`tools/test-build-closure.mjs` 通过模拟网络传输覆盖真实读取入口、Raw 回退和拒绝场景，同时保留原生 Make 夹具。测试通过不等于固件编译成功。
+Worker 按构建请求中的不可变 revision 读取重建所需资产，不读取 compatibility 审查选择。历史及新生成的无发布身份清单均可读取；显式 assetRef 冲突、源码提交不一致或压缩资产哈希错误仍须拒绝。`tools/test-request-parser.mjs` 覆盖真实重建入口；`tools/test-build-closure.mjs` 仅保留离线证据读取与原生 Make 回归，并确认固件工作流不调用审查工具。测试通过不等于固件编译成功。
 
 旧任务重跑仍使用原请求中的旧快照，不能偷偷替换。应在更新后的网页重新导入历史配置，检查后生成新请求，继续保留历史配置导入兼容性。

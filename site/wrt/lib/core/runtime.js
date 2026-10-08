@@ -98,7 +98,7 @@ const state = {
 };
 const LANIP_RE = /^(192\.168|10\.\d{1,3}|172\.(1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}$/;   // 仅接受内网 IPv4 / private IPv4 only
 let PLUGINS = { groups: [], plugins: [] }, I18N = null, TIMEZONES = null;
-let PACKAGE_MIRRORS = { schema: 2, presets: [{ id: 'source-default', label: { 'zh-CN': '跟随源码默认', en: 'Follow source default' }, sources: [] }] };
+let PACKAGE_MIRRORS = { schema: 2, presets: [{ id: 'source-default', kind: 'default', label: { 'zh-CN': '跟随源码默认', en: 'Follow source default' }, sources: [] }] };
 let MENU_INDEX = null, MENU_CATALOG = null, CATALOG_ENGINE = null, CATALOG_MODEL = null;
 let CATALOG_LOADER_MODULE = null, CATALOG_SCHEMA6_MODULE = null, BUILD_IDENTITY_MODULE = null, CATALOG_LOADER = null;
 let PROFILE_BASELINE_MODULE = null, PROFILE_BASELINE_STORE = null, ACTIVE_PROFILE_BASELINE = null;
@@ -190,7 +190,7 @@ function mirrorPreset(id) {
 }
 function packageMirrorAvailable(id, sourceId = state.source?.id) {
   const preset = mirrorPreset(id);
-  return Boolean(preset && (!sourceId || (preset.sources || []).includes(sourceId)));
+  return Boolean(preset && (preset.kind === 'default' || !sourceId || (preset.sources || []).includes(sourceId)));
 }
 function packageMirrorEntries(sourceId = state.source?.id) {
   return (PACKAGE_MIRRORS?.presets || [])

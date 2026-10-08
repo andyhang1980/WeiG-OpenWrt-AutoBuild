@@ -76,6 +76,42 @@ assert.match(pluginController, /const sizes = catalogObservedPackageSizes\(\);/,
 const extract = (source, name) => source.match(new RegExp(`(function ${name}\\([^]*?\\n\\})`))?.[1];
 const stateSource = read('site/wrt/lib/menuconfig/menuconfig-state.js');
 const catalogSource = moduleSources['site/wrt/lib/catalog/catalog-controller.js'];
+const advisoryContext = {
+  state: { device: { id: 'catalog-target' } },
+  ACTIVE_PROFILE_BASELINE: { values: new Map([['PACKAGE_builtin', 'y']]) },
+  PROJECT: { customization: { ui: { applicationCountAdvisory: { warningAbove: 6, dangerAbove: 10 } } } },
+  PLUGINS: { plugins: [] }, catalogUserOverrides: new Map(), menuImportedOriginal: new Map(),
+  catalogEngineValues: () => advisoryValues,
+  curatedMenuOption: (plugin) => ({ symbol: `PACKAGE_${plugin.id}` }),
+  catalogPackageRecordForSymbol: (symbol) => ({ package: symbol.slice('PACKAGE_'.length) }),
+};
+const advisoryValues = new Map();
+vm.createContext(advisoryContext);
+vm.runInContext(extract(pluginController, 'applicationCountAdvisory'), advisoryContext);
+for (const [count, level] of [[0, ''], [6, ''], [7, 'warning'], [10, 'warning'], [11, 'danger']]) {
+  advisoryContext.PLUGINS.plugins = Array.from({ length: count }, (_, n) => ({ id: `app${n}` }));
+  for (const plugin of advisoryContext.PLUGINS.plugins) {
+    advisoryValues.set(`PACKAGE_${plugin.id}`, 'y');
+    advisoryContext.menuImportedOriginal.set(`PACKAGE_${plugin.id}`, 'y');
+  }
+  const before = JSON.stringify([...advisoryValues]);
+  const report = advisoryContext.applicationCountAdvisory();
+  assert.equal(report.count, count); assert.equal(report.level, level);
+  assert.equal(JSON.stringify([...advisoryValues]), before, 'advisories must never mutate config');
+}
+for (const [name, value] of [['builtin', 'y'], ['automatic', 'y'], ['module', 'm'], ['disabled', 'n']]) {
+  advisoryContext.PLUGINS.plugins.push({ id: name }); advisoryValues.set(`PACKAGE_${name}`, value);
+}
+advisoryContext.menuImportedOriginal.set('PACKAGE_builtin', 'y');
+advisoryContext.menuImportedOriginal.set('PACKAGE_module', 'm');
+advisoryContext.menuImportedOriginal.set('PACKAGE_disabled', 'y');
+advisoryContext.catalogUserOverrides.set('PACKAGE_disabled', 'n');
+advisoryContext.catalogUserOverrides.set('PACKAGE_app0', null);
+advisoryContext.PLUGINS.plugins.push({ id: 'app0' });
+assert.equal(advisoryContext.applicationCountAdvisory().count, 11,
+  'deduplicate concrete imports, inherit null override, exclude baseline/M/N/automatic dependencies');
+advisoryContext.ACTIVE_PROFILE_BASELINE = null;
+assert.equal(advisoryContext.applicationCountAdvisory(), null, 'no guess without Native baseline');
 const records = ['app', 'lib', 'module', 'archive-only'].map((name) => ({ package: name, configSymbol: `PACKAGE_${name}` }));
 const model = { bySymbol: new Map(records.map((r) => [r.configSymbol, r])), byPackage: new Map(records.map((r) => [r.package, r])) };
 model.bySymbol.set('PACKAGE_app_INCLUDE_data', { configSymbol: 'PACKAGE_app_INCLUDE_data', type: 'bool' });

@@ -155,6 +155,25 @@ function fixturesFor({ compact = false, declareSchema = false, mutate = () => {}
   return fixtures;
 }
 try {
+  for (const sourceId of ['OpenWrt', 'ImmortalWrt', 'lede', 'hanwckf', 'iStoreOS', 'Lienol', 'future-source']) {
+    const currentSource = { ...source, id: sourceId };
+    const native = { ...baseline, source: currentSource };
+    const req = { ...request, source: sourceId,
+      configId: `catalog-target/${sourceId}/fixture/DEVICE_fixture`,
+      firmware: { theme: 'luci-theme-fixture', themeMode: 'inherit', packageMirror: 'source-default' } };
+    const fixtures = fixturesFor({ mutate: ({ index, assets, graphData, asset, logical, contract }) => {
+      index.sources[0].id = sourceId;
+      graphData.source = currentSource;
+      assets[logical] = asset(contract.asset, graphData);
+      assets.profileBaselines = { ...asset('fixture.profiles.json.gz', native), schema: 3,
+        encoding: native.encoding, profiles: 1, configGroups: 1 };
+    } });
+    runRequest(req, { fixtures });
+    if (sourceId === 'future-source') runRequest({ ...req,
+      firmware: { ...req.firmware, packageMirror: 'ustc' } }, { fixtures, expectedError: /No source is registered/ });
+  }
+  runRequest({ ...request, firmware: { ...request.firmware, themeMode: 'broken' } },
+    { fixtures: fixturesFor(), expectedError: /theme mode is invalid/ });
   runRequest(request, { fixtures: fixturesFor({ mutate: ({ index }) => {
     const buildInputs = { schema: 1, sourceCommit: commit, feeds: [{ name: 'packages',
       method: 'src-git', options: [], url: 'https://example.invalid/packages.git', commit: 'd'.repeat(40) }] };

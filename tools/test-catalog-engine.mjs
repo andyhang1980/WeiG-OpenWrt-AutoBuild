@@ -30,6 +30,49 @@ import {
 import { safeCatalogDataRef } from '../site/wrt/lib/catalog-loader.js';
 import { createRuntimeMenu } from '../site/wrt/lib/catalog-schema6.js';
 
+// Installation is a consumer of native facts, not a package-name blacklist.
+const installationContract = { schema: 1, kind: 'openwrt-apk-provides-v1', configSymbol: 'USE_APK' };
+const installRecords = [
+  { configSymbol: 'USE_APK', kconfigSymbol: 'USE_APK', type: 'bool', states: ['n', 'y'] },
+  ...['minimal', 'complete', 'consumer'].map(packageName => ({ kind: 'package', package: packageName,
+    configSymbol: `PACKAGE_${packageName}`, kconfigSymbol: `PACKAGE_${packageName}`, type: 'tristate',
+    states: ['n', 'm', 'y'], canDisable: true,
+    kconfig: packageName === 'consumer' ? { selectsExpressions: [['PACKAGE_complete']] } : {},
+    packageInfo: { installation: { apk: { name: packageName,
+      provides: packageName === 'consumer' ? [] : ['implementation'] } }, depends: [] },
+  })),
+];
+const installModel = createCatalogModel({ schema: 5, relations: { schema: 2, records: installRecords,
+  indexes: {}, packageInstallation: installationContract } });
+const installValues = new Map([['USE_APK', 'y'], ['PACKAGE_minimal', 'y'], ['PACKAGE_complete', 'y'], ['PACKAGE_consumer', 'y']]);
+assert(validateConfig(installModel, installValues).some(row => row.code === 'package-conflict' && row.installation),
+  'simultaneous installed versioned APK providers were not diagnosed');
+const installRepair = deriveConfigurationRepairPlan(installModel, installValues);
+assert(!installRepair.unresolved.length && installRepair.finalValues.get('PACKAGE_minimal') === 'n' &&
+  installRepair.finalValues.get('PACKAGE_complete') === 'y' && installRepair.finalValues.get('PACKAGE_consumer') === 'y',
+  'provider recommendation must retain the required variant through minimal legal menuconfig actions');
+for (const [symbol, value] of [['USE_APK', 'n'], ['PACKAGE_minimal', 'm']]) {
+  assert(!validateConfig(installModel, new Map([...installValues, [symbol, value]])).some(row => row.installation),
+    'APK-only installed-Y constraints leaked into OPKG or M-only package builds');
+}
+const missingRecord = { kind: 'package', package: 'consumer', configSymbol: 'PACKAGE_consumer',
+  kconfigSymbol: 'PACKAGE_consumer', type: 'bool', states: ['n', 'y'], canDisable: true,
+  packageInfo: { depends: [{ required: true, packages: ['absent-provider'], raw: '+absent-provider' }] } };
+const missingValues = new Map([['PACKAGE_consumer', 'y']]);
+for (const complete of [false, true]) {
+  const missingModel = createCatalogModel({ schema: 5, relations: { schema: 2, records: [missingRecord], indexes: {},
+    packageClosureComplete: complete, packageClosureCapabilities: ['complete-package-build-closure-v1'],
+    packageClosureValidation: { metadataComplete: complete } } });
+  const violations = validateConfig(missingModel, missingValues, { deferred: 'report' });
+  assert(complete ? violations.some(row => row.missing) : violations.some(row => row.deferred),
+    `missing native dependency must be distinguished from incomplete legacy metadata: ${complete} ${JSON.stringify(violations)}`);
+  if (complete) {
+    const repair = deriveConfigurationRepairPlan(missingModel, missingValues);
+    assert(!repair.unresolved.length && repair.finalValues.get('PACKAGE_consumer') === 'n',
+      'a nonexistent dependency must recommend legal dependent removal, not invent a provider');
+  }
+}
+
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -2511,7 +2554,7 @@ expectThrow(() => normalizeCompatibilityDocument({ ...buildDependencyRule, schem
   'schema-3 compatibility accepted buildDependency');
 expectThrow(() => normalizeCompatibilityDocument({ ...buildDependencyRule, schema: 2 }), /requires compatibility schema 4|unsupported field/i,
   'schema-2 compatibility accepted buildDependency');
-expectThrow(() => normalizeCompatibilityDocument({ ...buildDependencyRule, schema: 7 }), /schema 2, 3, 4, 5, or 6/i,
+expectThrow(() => normalizeCompatibilityDocument({ ...buildDependencyRule, schema: 8 }), /schema 2, 3, 4, 5, 6, or 7/i,
   'unknown compatibility schema was accepted');
 
 const preventiveBuildDependencyRule = {
@@ -2787,6 +2830,14 @@ const defaultBranchOrder = orderCatalogIndex({ sources: [{ id: 'future', branche
 assert(defaultBranchOrder.map((row) => row.branch).join(',') ===
   'openwrt-26.12,openwrt-25.12,main,master,openwrt-27.01-rc1',
   'a future stable branch did not become the first default while prerelease stayed special');
+const vendorOrder = orderCatalogIndex({ sources: [{ id: 'new-source', defaultBranch: 'vendor-24.10', branches: [
+  { id: 'vendor-24.10', branch: 'vendor-24.10', version: '24.10' },
+  { id: 'vendor-30.01', branch: 'vendor-30.01', version: '30.01' },
+  { id: 'vendor-23.05', branch: 'vendor-23.05', version: '23.05' },
+] }] }).sources[0];
+assert(vendorOrder.branches.map(row => row.id).join(',') === 'vendor-30.01,vendor-24.10,vendor-23.05',
+  'vendor version metadata must share numeric stable sorting');
+assert(vendorOrder.defaultBranch === 'vendor-24.10', 'sorting must preserve the upstream default independently');
 const targetTree = {
   targetSelectors: [{ id: 'family' }, { id: 'board' }, { id: 'profile' }],
   targetTree: [{ value: 'first', children: [{ value: 'fallback', children: [{ value: 'base' }] }] },

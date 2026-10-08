@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { request as httpRequest } from 'node:http';
 import { connect, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
@@ -626,6 +626,8 @@ async function main() {
         // resize events, which legitimately dismiss transient tooltips.
         return Boolean(window.__WEIG_UI_RUNTIME__ && form && !form.hidden && actionbar && !actionbar.hidden &&
           menu && !menu.hidden && picker?.getAttribute('aria-busy') === 'false' &&
+          typeof ACTIVE_PROFILE_BASELINE !== 'undefined' && ACTIVE_PROFILE_BASELINE &&
+          typeof catalogLoadMode !== 'undefined' && catalogLoadMode === 'idle' && !activeUiOperation &&
           document.fonts.status === 'loaded');
       }`), LOAD_TIMEOUT_MS, 200);
       await evaluateFunction(browser, `() => new Promise((resolve) => {
@@ -749,6 +751,12 @@ async function main() {
         bodyWhiteSpace: bodyStyle?.whiteSpace || '',
         bodyHeight: body?.getBoundingClientRect().height || 0,
         bodyLineHeight: bodyStyle ? parseFloat(bodyStyle.lineHeight) || 0 : 0,
+        scrollWidth: tooltip.scrollWidth,
+        clientWidth: tooltip.clientWidth,
+        scrollHeight: tooltip.scrollHeight,
+        clientHeight: tooltip.clientHeight,
+        pinned: tooltip.classList.contains('is-pinned'),
+        visualWidth: window.visualViewport?.width || window.innerWidth,
       };
     }`, [selector]);
   }
@@ -767,6 +775,8 @@ async function main() {
     const selectors = ['#repoLink', '.header-actions .blog-link'];
     const initial = [];
     for (const selector of selectors) {
+      await waitFor(`${selector} translated tooltip ready`, () => evaluateFunction(browser,
+        `(selector) => Boolean(document.querySelector(selector)?.dataset.uiTooltipBody)`, [selector]), 5_000, 40);
       const target = await evaluateFunction(browser, `(selector) => {
         const element = document.querySelector(selector);
         if (!element) return null;
@@ -887,6 +897,117 @@ async function main() {
     await resetFloatingState();
   }
 
+  async function exerciseLongTooltip(context) {
+    const selector = '#selCount';
+    const message = '软件数量仅为风险提示，不代表容量计算；不计内置软件，新增软件过多可能超过 RootFS 分区容量。请查看已选插件清单，必要时减少软件或扩大可修改的 RootFS 分区。未知大小不能作为零大小处理。'.repeat(4);
+    const original = await evaluateFunction(browser, `(selector, message) => {
+      const target = document.querySelector(selector);
+      const original = target.dataset.uiTooltipBody;
+      target.dataset.uiTooltipBody = message;
+      target.focus({ preventScroll: true });
+      target.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+      return original ?? null;
+    }`, [selector, message]);
+    const state = await waitFor('long actionbar tooltip wraps safely', async () => {
+      // Background size enrichment can legitimately refresh actionbar copy.
+      // Rebind the synthetic long message if that update wins the first frame.
+      await evaluateFunction(browser, `(selector, message) => {
+        const target = document.querySelector(selector);
+        if (target.dataset.uiTooltipBody !== message) {
+          target.dataset.uiTooltipBody = message;
+          target.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+        }
+      }`, [selector, message]);
+      const state = await headerTooltipState(selector);
+      return state && !state.hidden && state.actual === message && tooltipSafe(state, context) ? state : null;
+    }, 3_000, 40).catch(async error => {
+      throw new Error(`${error.message}: ${JSON.stringify(await headerTooltipState(selector))}`);
+    });
+    expect(Boolean(state) && state.tooltipRect.right - state.tooltipRect.left <= state.visualWidth / 2 + 2,
+      context, 'long tooltip exceeds half of the visual viewport', state);
+    expect(Boolean(state) && state.scrollWidth <= state.clientWidth + 1,
+      context, 'long tooltip requires horizontal scrolling', state);
+    expect(Boolean(state) && !state.singleLine && state.bodyHeight > state.bodyLineHeight + 2,
+      context, 'long tooltip did not switch to multiline layout', state);
+    const copied = await evaluateFunction(browser, `(selector) => {
+      const target = document.querySelector(selector);
+      target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const tooltip = document.getElementById('uiTooltip');
+      const body = document.getElementById('uiTooltipBody');
+      const range = document.createRange(); range.selectNodeContents(body);
+      const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      target.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse' }));
+      const nativeMenuAllowed = tooltip.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      return { pinned: tooltip.classList.contains('is-pinned'), hidden: tooltip.hidden,
+        text: selection.toString(), nativeMenuAllowed };
+    }`, [selector]);
+    expect(copied.pinned && !copied.hidden && copied.text === message && copied.nativeMenuAllowed,
+      context, 'right-click pin/copy did not preserve the normal copy menu', copied);
+    await resetFloatingState();
+    const shortMessage = '插件说明\n来源：自选';
+    await evaluateFunction(browser, `(selector, message) => {
+      const target = document.querySelector(selector); target.dataset.uiTooltipBody = message;
+      target.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+    }`, [selector, shortMessage]);
+    const short = await waitFor('short multiline tooltip uses natural height', async () => {
+      const value = await headerTooltipState(selector);
+      return value && !value.hidden && value.actual === shortMessage && tooltipSafe(value, context) ? value : null;
+    }, 3_000, 40);
+    expect(short.scrollHeight <= short.clientHeight + 1,
+      context, 'short tooltip unnecessarily requires vertical scrolling', short);
+    await evaluateFunction(browser, `(selector, original) => {
+      const target = document.querySelector(selector);
+      if (original === null) delete target.dataset.uiTooltipBody;
+      else target.dataset.uiTooltipBody = original;
+      return true;
+    }`, [selector, original]);
+    await resetFloatingState();
+  }
+
+  async function exerciseTooltipDelayAndNaturalWidth(context) {
+    if (context.theme !== 'light' || context.viewport.width !== 1366) return;
+    const result = await evaluateFunction(browser, `async () => {
+      const target = $('selCount'), body = $('uiTooltipBody');
+      const original = { title: target.dataset.uiTooltipTitle, emphasis: target.dataset.uiTooltipEmphasis,
+        body: target.dataset.uiTooltipBody };
+      const font = body.style.fontSize;
+      const position = positionUiTooltip;
+      let positions = 0;
+      positionUiTooltip = (...args) => { positions++; return position(...args); };
+      try {
+        hideUiTooltip(true);
+        bindUiTooltipContent(target, { title: 'HNCP 家庭组网', body: 'HNCP协议自动配置家庭网络' + String.fromCharCode(10) + '来源：自选' });
+        body.style.fontSize = '17px';
+        target.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const delayed = uiTooltip.hidden && positions === 0;
+        await new Promise(resolve => setTimeout(resolve, 350));
+        const range = document.createRange(); range.setStart(body.firstChild, 0);
+        range.setEnd(body.firstChild, 'HNCP协议自动配置家庭网络'.length);
+        const lines = new Set([...range.getClientRects()].map(rect => Math.round(rect.top))).size;
+        const width = uiTooltip.getBoundingClientRect().width;
+        renderMenuconfig();
+        const unrelatedRenderKept = !uiTooltip.hidden;
+        const beforeMove = positions;
+        for (let index = 0; index < 10; index++) target.dispatchEvent(new PointerEvent('pointermove', { bubbles: true }));
+        const noMoveLayout = positions === beforeMove;
+        hideUiTooltip(true); positions = 0;
+        target.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+        target.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, relatedTarget: document.body }));
+        await new Promise(resolve => setTimeout(resolve, 800));
+        return { delayed, lines, width, cap: readViewportRect().width / 2, noMoveLayout, unrelatedRenderKept,
+          cancelled: uiTooltip.hidden && positions === 0 };
+      } finally {
+        positionUiTooltip = position; body.style.fontSize = font;
+        bindUiTooltipContent(target, original); hideUiTooltip(true);
+      }
+    }`);
+    expect(result.delayed && result.cancelled && result.noMoveLayout && result.unrelatedRenderKept, context,
+      'hover must be delayed, owner-scoped, cancellable and never position on pointermove', result);
+    expect(result.lines === 1 && result.width <= result.cap + 1, context,
+      'fractional natural width lost the last character or exceeded half the viewport', result);
+  }
+
   async function assertShortPageFooter(context) {
     await evaluateFunction(browser, `() => {
       const main = document.getElementById('app');
@@ -979,6 +1100,8 @@ async function main() {
     await ensureDockControlsVisible(context);
     await assertInside('#sideDock', context, { actionbarSafe: true });
     await exerciseDockTooltips(context);
+    await exerciseLongTooltip(context);
+    await exerciseTooltipDelayAndNaturalWidth(context);
 
     // Font panel: use the public Aa controls and exercise its maximum value.
     await click('#densityBtn');
@@ -1173,12 +1296,15 @@ async function main() {
           const navigationToken = `${theme}-${viewport.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
           const scenarioUrl = new URL(url);
           scenarioUrl.searchParams.set('uiTestScenario', navigationToken);
+          const previousTimeOrigin = await evaluateFunction(browser, '() => performance.timeOrigin');
           await browser.connection.command('Page.navigate', { url: scenarioUrl.href });
-          await waitFor('document navigation', async () => evaluateFunction(browser, `(token) => {
+          await waitFor('document navigation', async () => evaluateFunction(browser, `(token, previousOrigin) => {
             const current = new URL(location.href);
             const ready = document.readyState === 'complete' || document.readyState === 'interactive';
-            return ready && current.searchParams.get('uiTestScenario') === token;
-          }`, [navigationToken]), 20_000, 100);
+            // Page.navigate can update the URL before replacing the document.
+            // Do not mistake the previous page's ready globals for the new one.
+            return performance.timeOrigin !== previousOrigin && ready && current.searchParams.get('uiTestScenario') === token;
+          }`, [navigationToken, previousTimeOrigin]), 20_000, 100);
           if (await waitState(context)) await runInteractions(context);
           if (failures.length && !screenshotDir.path) {
             const shot = await screenshot(context);
@@ -1205,7 +1331,9 @@ async function main() {
   console.log(`[ui-browser] all ${THEMES.length * VIEWPORTS.length} viewport/theme scenarios passed`);
 }
 
-main().catch((error) => {
+export { CdpConnection, evaluateFunction, findChrome, httpJson, launchChrome, startPreview, waitFor };
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) main().catch((error) => {
   console.error(`[ui-browser] ${error.stack || error.message}`);
   process.exitCode = 1;
 });

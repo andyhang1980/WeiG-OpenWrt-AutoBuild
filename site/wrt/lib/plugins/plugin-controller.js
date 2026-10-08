@@ -16,15 +16,21 @@ function pluginState(p) {
   if (p.catalogOnly) {
     if (state.device?.id !== 'catalog-target' || !MENU_CATALOG) return 'unavailable';
     const option = curatedMenuOption(p);
-    return option && catalogPackageRecordForSymbol(option.symbol) && optionVisible(option) ? 'ok' : 'unavailable';
+    return catalogPluginAvailability(option);
   }
   if (state.device?.id === 'catalog-target' && MENU_CATALOG) {
     const option = curatedMenuOption(p);
-    return option && catalogPackageRecordForSymbol(option.symbol) && optionVisible(option) ? 'ok' : 'unavailable';
+    return catalogPluginAvailability(option);
   }
   if (state.source.append) return 'ok';   // append 模式产线:所有插件按追加方式可勾 / append-mode source: every plugin is selectable by appending
   if (!p.pkgs?.[state.source.id] && !p.pkg) return 'unavailable';
   return 'ok';
+}
+function catalogPluginAvailability(option) {
+  if (!option || !catalogPackageRecordForSymbol(option.symbol)) return 'unavailable';
+  const constraints = optionStateConstraints(option);
+  return optionVisible(option) && !constraints.readOnly &&
+    (constraints.selectableStates.includes('y') || constraints.current !== 'n') ? 'ok' : 'unavailable';
 }
 const byId = (id) => PLUGINS.plugins.find((x) => x.id === id);
 
@@ -68,10 +74,19 @@ function renderCatalogApplicationsState(box) {
   return true;
 }
 
-function renderGroups() {
+function pluginCardRevision(p) {
+  const option = state.device?.id === 'catalog-target' ? curatedMenuOption(p) : null;
+  const origin = option ? catalogOriginMeta(option) : null;
+  return JSON.stringify([state.lang, state.advanced, devAllowGrey, pluginState(p),
+    curatedPluginChecked(p, pluginState(p), option), origin,
+    option ? optionStateConstraints(option) : null]);
+}
+function renderGroups({ incremental = false } = {}) {
   const box = $('groups');
-  box.textContent = '';
+  if (!incremental || !PLUGINS.plugins.length) box.textContent = '';
   if (renderCatalogApplicationsState(box)) return;
+  const existing = new Map([...box.querySelectorAll('.group')].map(group => [group.dataset.group, group]));
+  const retained = new Set();
   const kw = $('searchBox').value.trim().toLowerCase();
   const hotOnly = $('hotOnly').checked;
   const searching = !!kw || hotOnly;
@@ -83,9 +98,32 @@ function renderGroups() {
       .filter((p) => !kw || searchHay(p).includes(kw));
     if (!items.length) continue;
 
+    const oldGroup = existing.get(g);
+    const membership = JSON.stringify([state.lang, state.advanced, searching, items.map(p => p.id)]);
+    if (incremental && oldGroup?.dataset.membership === membership) {
+      retained.add(oldGroup);
+      const cards = new Map([...oldGroup.querySelectorAll('.plugin')].map(card => [card.dataset.pid, card]));
+      for (const p of items) {
+        const oldCard = cards.get(p.id);
+        const revision = pluginCardRevision(p);
+        if (oldCard?.dataset.revision === revision) continue;
+        const card = renderPlugin(p);
+        card.dataset.revision = revision;
+        // Selection changes no label geometry. Preserve its measured fit and
+        // avoid layout reads across every card on every checkbox click.
+        for (const cls of ['fit-s1', 'two-line', 'fit-s2']) {
+          if (oldCard?.querySelector('.plugin-name').classList.contains(cls)) card.querySelector('.plugin-name').classList.add(cls);
+        }
+        oldCard?.replaceWith(card);
+      }
+      continue;
+    }
+
     const group = document.createElement('div');
     group.className = 'group' + (!searching && collapsed.has(g) ? ' collapsed' : '') + (searching ? ' searching' : '');
     group.dataset.group = g;
+    group.dataset.membership = membership;
+    retained.add(group);
 
     const head = document.createElement('button');
     head.type = 'button';
@@ -121,10 +159,17 @@ function renderGroups() {
 
     const grid = document.createElement('div');
     grid.className = 'plugin-grid';
-    for (const p of items) grid.appendChild(renderPlugin(p));
+    for (const p of items) {
+      const card = renderPlugin(p);
+      card.dataset.revision = pluginCardRevision(p);
+      grid.appendChild(card);
+    }
     group.appendChild(grid);
-    box.appendChild(group);
+    if (oldGroup) oldGroup.replaceWith(group); else box.appendChild(group);
+    if (incremental) fitPluginNames(group);
   }
+  for (const group of existing.values()) if (!retained.has(group)) group.remove();
+  if (retained.size) box.querySelector('.empty-hint')?.remove();
   if (!box.children.length) {
     const empty = document.createElement('p');
     empty.className = 'hint empty-hint';
@@ -133,7 +178,8 @@ function renderGroups() {
   }
   updateLegend();
   updateGroupBadges();
-  fitPluginNames();
+  if (!incremental) fitPluginNames();
+  renderCatalogDependencyDetails();
 }
 
 /* V11:插件名适配:默认单行,溢出先缩 1px,再分两行,再缩 1px(共 −2px),极端长名靠两行内省略号兜底 / V11: plugin-name fitting: single line by default; on overflow shrink 1px, then wrap to two lines, then shrink 1px more (−2px total); extreme names fall back to the two-line ellipsis */
@@ -176,7 +222,7 @@ window.addEventListener('resize', () => {
   }, 150);
 });
 
-/* 插件项只显示名字以保持列表紧凑；说明复用统一浮窗，悬停临时显示、双击固定 / Plugin rows stay compact; details reuse the shared hover/double-click tooltip. */
+/* Plugin cards toggle once per click; details reuse the shared hover/right-click tooltip. */
 function renderPlugin(p) {
   const st = pluginState(p);
   const adv = state.advanced;
@@ -184,6 +230,7 @@ function renderPlugin(p) {
   // 必选项(locked):内置且任何模式都不可取消 / locked items stay checked & disabled even in advanced mode
   const lockedItem = p.locked && st === 'builtin';
   const item = document.createElement('div');
+  item.dataset.pid = p.id;
   item.className = 'plugin' +
     (st === 'loading' ? ' plugin-loading' : '') +
     (st === 'unavailable' ? (canForce ? ' plugin-forceable' : ' plugin-disabled') : '') +
@@ -202,6 +249,7 @@ function renderPlugin(p) {
   // V10:灰色项只看双开关,其余沿用旧规则 / V10: grey items obey the double gate; everything else keeps the old rule
   cb.disabled = st === 'loading' || lockedItem || catalogLocked ||
     (st === 'unavailable' ? !canForce : (!adv && st !== 'ok'));
+  if (catalogOption && !optionStateConstraints(catalogOption).selectableStates.includes(cb.checked ? 'n' : 'y')) cb.disabled = true;
   if (catalogLocked) bindUiTooltipContent(item, { body: t('runtime.df77507c4802') });
   cb.setAttribute('aria-label', pName(p));
   const applyChecked = (checked) => {
@@ -209,6 +257,7 @@ function renderPlugin(p) {
     if (catalogOption) {
       const applied = setMenuValue(catalogOption, checked ? 'y' : 'n');
       if (!applied) cb.checked = curatedPluginChecked(p, st, catalogOption);
+      nameBtn.setAttribute('aria-pressed', String(cb.checked));
       return applied;
     }
     const selectedBefore = new Set(state.sel);
@@ -232,6 +281,7 @@ function renderPlugin(p) {
         if (required && required.id !== p.id) syncCuratedToMenu(required, 'y');
       }
     }
+    nameBtn.setAttribute('aria-pressed', String(cb.checked));
     updateStats();
     return true;
   };
@@ -286,13 +336,20 @@ function renderPlugin(p) {
   const size = Number.isSafeInteger(p.sizeBytes) && p.sizeBytes >= 0
     ? t('drawer.size', { n: fmtSize(p.sizeBytes) }) : '';
   const tooltipBody = displayText(detail) + '\n' + displayText(pkg) + (size ? ' · ' + size : '');
-  bindUiTooltipContent(item, { title: pName(p), body: tooltipBody });
-  bindUiTooltipContent(nameBtn, { title: pName(p), body: tooltipBody });
+  const tooltip = { title: pName(p), body: tooltipBody, key: `plugin:${p.id}`,
+    action: catalogOption ? {
+      label: t(st === 'unavailable' ? 'dependency.reason' : 'dependency.toggle'),
+      onClick: () => openCatalogDependencyDetails(catalogOption),
+    } : null };
+  bindUiTooltipContent(item, tooltip);
+  bindUiTooltipContent(nameBtn, tooltip);
   nameBtn.removeAttribute('title');
-  nameBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    showDatasetTooltip(nameBtn, e);
+  nameBtn.setAttribute('aria-pressed', String(cb.checked));
+  item.addEventListener('click', (event) => {
+    if (event.target === cb) return;
+    if (cb.disabled) { showDatasetTooltip(item, event); return; }
+    applyChecked(!cb.checked);
+    nameBtn.setAttribute('aria-pressed', String(cb.checked));
   });
   item.appendChild(nameBtn);
   return item;
@@ -368,6 +425,24 @@ function effectiveEnabledPlugins() {
     const option = curatedMenuOption(plugin);
     return option && ['y', 'm'].includes(values.get(option.symbol));
   });
+}
+
+function applicationCountAdvisory() {
+  if (state.device?.id !== 'catalog-target' || !ACTIVE_PROFILE_BASELINE) return null;
+  const values = catalogEngineValues();
+  const added = new Set();
+  for (const plugin of PLUGINS.plugins) {
+    const option = curatedMenuOption(plugin);
+    const symbol = option?.symbol;
+    if (!symbol || values.get(symbol) !== 'y' || ACTIVE_PROFILE_BASELINE.values.get(symbol) === 'y') continue;
+    const requested = catalogUserOverrides.get(symbol) ?? menuImportedOriginal.get(symbol);
+    if (requested !== 'y') continue;
+    const record = catalogPackageRecordForSymbol(symbol);
+    if (record) added.add(record.package);
+  }
+  const policy = PROJECT?.customization?.ui?.applicationCountAdvisory || { warningAbove: 6, dangerAbove: 10 };
+  return { count: added.size, level: added.size > policy.dangerAbove ? 'danger'
+    : added.size > policy.warningAbove ? 'warning' : '' };
 }
 
 function updateLegend() {
@@ -545,6 +620,13 @@ function updateStats() {
   const n = effectiveEnabledPlugins().length;
   $('selCount').textContent = state.device?.id === 'catalog-target'
     ? t('bar.selectionSummary', { n, direct: sel.all.length }) : t('bar.selected', { n });
+  const applicationAdvisory = applicationCountAdvisory();
+  $('selCount').classList.toggle('capacity-warning', applicationAdvisory?.level === 'warning');
+  $('selCount').classList.toggle('capacity-danger', applicationAdvisory?.level === 'danger');
+  if (applicationAdvisory?.level) {
+    $('selCount').textContent += ' · ' + t('bar.addedApplications', { n: applicationAdvisory.count });
+    bindUiTooltipContent($('selCount'), { body: t('bar.applicationCountRisk') });
+  } else bindUiTooltipContent($('selCount'), { body: t('bar.selected.title') });
   const rootfs = rootfsPartitionInfo();
   const packageSizes = packageSizeEstimate();
   const sizeState = state.device?.id === 'catalog-target' ? catalogPackageSizesStatus.state : 'unavailable';
