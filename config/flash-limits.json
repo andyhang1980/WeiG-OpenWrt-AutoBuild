@@ -1,4 +1,4 @@
-﻿{
+{
   "schema": 1,
   "description": "Per-Target/Profile flash size gates enforced on built firmware images. / 按 Target/Profile 强制校验编译产物的闪存体积上限。",
   "rules": [
