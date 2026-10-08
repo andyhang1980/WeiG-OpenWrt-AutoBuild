@@ -1,5 +1,5 @@
 {
-  "version": "v2610071301",
+  "version": "v2610081144",
   "timezone": "Asia/Shanghai",
   "fingerprint": "9a2e3527bcf2382f9118da815429e47078f63a06f2d1cab9bdac470f4e44927a",
   "siteSha256": "81483459634db459393a3e59bbbae6ecf7ff91c27a5d97166b2fec1ff4b476c7",
@@ -20,8 +20,8 @@
     "catalog-main": {
       "channel": "catalog-main",
       "repository": "andyhang1980/WeiG-OpenWrt-Menuconfig-Catalog",
-      "codeSha": "384c57fb8fde6ad8aa02e4a6c9e2dab3f4a63c48",
-      "assetRef": "f1b0ed993ddefafb76532bddab28d67b601390a8"
+      "codeSha": "2e75076d9851a64502e9b9ccbe743ab6697f72ae",
+      "assetRef": "26f15578c584fd0d120d3bc2c90916df1a935a33"
     }
   }
 }
